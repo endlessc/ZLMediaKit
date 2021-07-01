@@ -16,6 +16,7 @@
 #include "Util/mini.h"
 #include "Util/onceToken.h"
 #include "Util/NoticeCenter.h"
+#include "macros.h"
 
 using namespace std;
 using namespace toolkit;
@@ -28,28 +29,6 @@ namespace mediakit {
 //默认配置文件名为 /path/to/your/exe.ini
 //加载配置文件成功后返回true，否则返回false
 bool loadIniConfig(const char *ini_path = nullptr);
-////////////其他宏定义///////////
-#ifndef MAX
-#define MAX(a,b) ((a) > (b) ? (a) : (b) )
-#endif //MAX
-
-#ifndef MIN
-#define MIN(a,b) ((a) < (b) ? (a) : (b) )
-#endif //MIN
-
-#ifndef CLEAR_ARR
-#define CLEAR_ARR(arr) for(auto &item : arr){ item = 0;}
-#endif //CLEAR_ARR
-
-#define SERVER_NAME "ZLMediaKit-5.0(build in " __DATE__ " " __TIME__ ")"
-#define VHOST_KEY "vhost"
-#define HTTP_SCHEMA "http"
-#define RTSP_SCHEMA "rtsp"
-#define RTMP_SCHEMA "rtmp"
-#define HLS_SCHEMA "hls"
-#define TS_SCHEMA "ts"
-#define FMP4_SCHEMA "fmp4"
-#define DEFAULT_VHOST "__defaultVhost__"
 
 ////////////广播名称///////////
 namespace Broadcast {
@@ -187,6 +166,8 @@ extern const string kRtspDemand;
 extern const string kRtmpDemand;
 extern const string kTSDemand;
 extern const string kFMP4Demand;
+//转协议是否全局开启或忽略音频
+extern const string kEnableAudio;
 }//namespace General
 
 
@@ -247,10 +228,6 @@ namespace Rtp {
 extern const string kVideoMtuSize;
 //RTP打包最大MTU,公网情况下更小
 extern const string kAudioMtuSize;
-//RTP排序缓存最大个数
-extern const string kMaxRtpCount;
-//如果RTP序列正确次数累计达到该数字就启动清空排序缓存
-extern const string kClearCount;
 } //namespace Rtsp
 
 ////////////组播配置///////////
@@ -295,6 +272,8 @@ extern const string kFileBufSize;
 extern const string kFilePath;
 // 是否广播 ts 切片完成通知
 extern const string kBroadcastRecordTs;
+//hls直播文件删除延时，单位秒
+extern const string kDeleteDelaySec;
 } //namespace Hls
 
 ////////////Rtp代理相关配置///////////

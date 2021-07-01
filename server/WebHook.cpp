@@ -19,6 +19,7 @@
 #include "Rtsp/RtspSession.h"
 #include "Http/HttpSession.h"
 #include "WebHook.h"
+#include "WebApi.h"
 
 using namespace toolkit;
 using namespace mediakit;
@@ -112,6 +113,17 @@ const char *getContentType(const HttpArgs &value){
     return "application/x-www-form-urlencoded";
 }
 
+string getVhost(const Value &value) {
+    const char *key = VHOST_KEY;
+    auto val = value.find(key, key + sizeof(VHOST_KEY) - 1);
+    return val ? val->asString() : "";
+}
+
+string getVhost(const HttpArgs &value) {
+    auto val = value.find(VHOST_KEY);
+    return val != value.end() ? val->second : "";
+}
+
 void do_http_hook(const string &url,const ArgsType &body,const function<void(const Value &,const string &)> &func){
     GET_CONFIG(string, mediaServerId, General::kMediaServerId);
     GET_CONFIG(float, hook_timeoutSec, Hook::kTimeoutSec);
@@ -122,13 +134,17 @@ void do_http_hook(const string &url,const ArgsType &body,const function<void(con
     auto bodyStr = to_string(body);
     requester->setBody(bodyStr);
     requester->addHeader("Content-Type", getContentType(body));
+    auto vhost = getVhost(body);
+    if (!vhost.empty()) {
+        requester->addHeader("X-VHOST", vhost);
+    }
     std::shared_ptr<Ticker> pTicker(new Ticker);
     requester->startRequester(url, [url, func, bodyStr, requester, pTicker](const SockException &ex,
                                                                             const string &status,
                                                                             const HttpClient::HttpHeader &header,
-                                                                            const string &strRecvBody) {
-        onceToken token(nullptr, [&]() {
-            const_cast<HttpRequester::Ptr &>(requester).reset();
+                                                                            const string &strRecvBody) mutable{
+        onceToken token(nullptr, [&]() mutable{
+            requester.reset();
         });
         parse_http_response(ex,status,header,strRecvBody,[&](const Value &obj,const string &err){
             if (func) {
@@ -146,7 +162,7 @@ void do_http_hook(const string &url,const ArgsType &body,const function<void(con
 static ArgsType make_json(const MediaInfo &args){
     ArgsType body;
     body["schema"] = args._schema;
-    body["vhost"] = args._vhost;
+    body[VHOST_KEY] = args._vhost;
     body["app"] = args._app;
     body["stream"] = args._streamid;
     body["params"] = args._param_strs;
@@ -300,11 +316,16 @@ void installWebHook(){
             return;
         }
         ArgsType body;
-        body["regist"] = bRegist;
-        body["schema"] = sender.getSchema();
-        body["vhost"] = sender.getVhost();
-        body["app"] = sender.getApp();
-        body["stream"] = sender.getId();
+        if (bRegist) {
+            body = makeMediaSourceJson(sender);
+            body["regist"] = bRegist;
+        } else {
+            body["schema"] = sender.getSchema();
+            body[VHOST_KEY] = sender.getVhost();
+            body["app"] = sender.getApp();
+            body["stream"] = sender.getId();
+            body["regist"] = bRegist;
+        }
         //执行hook
         do_http_hook(hook_stream_chaned,body, nullptr);
     });
@@ -336,7 +357,7 @@ void installWebHook(){
         body["url"] = info.url;
         body["app"] = info.app;
         body["stream"] = info.stream;
-        body["vhost"] = info.vhost;
+        body[VHOST_KEY] = info.vhost;
         return body;
     };
 
@@ -388,7 +409,7 @@ void installWebHook(){
 
         ArgsType body;
         body["schema"] = sender.getSchema();
-        body["vhost"] = sender.getVhost();
+        body[VHOST_KEY] = sender.getVhost();
         body["app"] = sender.getApp();
         body["stream"] = sender.getId();
         weak_ptr<MediaSource> weakSrc = sender.shared_from_this();

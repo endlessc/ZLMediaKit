@@ -25,7 +25,9 @@
 #include "Http/HttpRequester.h"
 #include "Http/HttpSession.h"
 #include "Network/TcpServer.h"
+#include "Network/UdpServer.h"
 #include "Player/PlayerProxy.h"
+#include "Pusher/PusherProxy.h"
 #include "Util/MD5.h"
 #include "WebApi.h"
 #include "WebHook.h"
@@ -34,6 +36,9 @@
 #include "FFmpegSource.h"
 #if defined(ENABLE_RTPPROXY)
 #include "Rtp/RtpServer.h"
+#endif
+#ifdef ENABLE_WEBRTC
+#include "../webrtc/WebRtcTransport.h"
 #endif
 
 using namespace toolkit;
@@ -124,6 +129,26 @@ static HttpApi toApi(const function<void(API_ARGS_JSON)> &cb) {
     });
 }
 
+static HttpApi toApi(const function<void(API_ARGS_STRING_ASYNC)> &cb) {
+    return [cb](const Parser &parser, const HttpSession::HttpResponseInvoker &invoker, SockInfo &sender) {
+        GET_CONFIG(string, charSet, Http::kCharSet);
+        HttpSession::KeyValue headerOut;
+        headerOut["Content-Type"] = string("application/json; charset=") + charSet;
+
+        Json::Value val;
+        val["code"] = API::Success;
+
+        cb(sender, parser.getHeader(), headerOut, parser, val, invoker);
+    };
+}
+
+static HttpApi toApi(const function<void(API_ARGS_STRING)> &cb) {
+    return toApi([cb](API_ARGS_STRING_ASYNC) {
+        cb(API_ARGS_VALUE);
+        invoker(200, headerOut, val.toStyledString());
+    });
+}
+
 void api_regist(const string &api_path, const function<void(API_ARGS_MAP)> &func) {
     s_map_api.emplace(api_path, toApi(func));
 }
@@ -137,6 +162,14 @@ void api_regist(const string &api_path, const function<void(API_ARGS_JSON)> &fun
 }
 
 void api_regist(const string &api_path, const function<void(API_ARGS_JSON_ASYNC)> &func) {
+    s_map_api.emplace(api_path, toApi(func));
+}
+
+void api_regist(const string &api_path, const function<void(API_ARGS_STRING)> &func){
+    s_map_api.emplace(api_path, toApi(func));
+}
+
+void api_regist(const string &api_path, const function<void(API_ARGS_STRING_ASYNC)> &func){
     s_map_api.emplace(api_path, toApi(func));
 }
 
@@ -230,11 +263,15 @@ static inline void addHttpListener(){
 }
 
 //拉流代理器列表
-static unordered_map<string ,PlayerProxy::Ptr> s_proxyMap;
+static unordered_map<string, PlayerProxy::Ptr> s_proxyMap;
 static recursive_mutex s_proxyMapMtx;
 
+//推流代理器列表
+static unordered_map<string, PusherProxy::Ptr> s_proxyPusherMap;
+static recursive_mutex s_proxyPusherMapMtx;
+
 //FFmpeg拉流代理器列表
-static unordered_map<string ,FFmpegSource::Ptr> s_ffmpegMap;
+static unordered_map<string, FFmpegSource::Ptr> s_ffmpegMap;
 static recursive_mutex s_ffmpegMapMtx;
 
 #if defined(ENABLE_RTPPROXY)
@@ -243,8 +280,70 @@ static unordered_map<string, RtpServer::Ptr> s_rtpServerMap;
 static recursive_mutex s_rtpServerMapMtx;
 #endif
 
-static inline string getProxyKey(const string &vhost,const string &app,const string &stream){
+static inline string getProxyKey(const string &vhost, const string &app, const string &stream) {
     return vhost + "/" + app + "/" + stream;
+}
+
+static inline string getPusherKey(const string &schema, const string &vhost, const string &app, const string &stream,
+                                  const string &dst_url) {
+    return schema + "/" + vhost + "/" + app + "/" + stream + "/" + MD5(dst_url).hexdigest();
+}
+
+Value makeMediaSourceJson(MediaSource &media){
+    Value item;
+    item["schema"] = media.getSchema();
+    item[VHOST_KEY] = media.getVhost();
+    item["app"] = media.getApp();
+    item["stream"] = media.getId();
+    item["createStamp"] = (Json::UInt64) media.getCreateStamp();
+    item["aliveSecond"] = (Json::UInt64) media.getAliveSecond();
+    item["bytesSpeed"] = media.getBytesSpeed();
+    item["readerCount"] = media.readerCount();
+    item["totalReaderCount"] = media.totalReaderCount();
+    item["originType"] = (int) media.getOriginType();
+    item["originTypeStr"] = getOriginTypeString(media.getOriginType());
+    item["originUrl"] = media.getOriginUrl();
+    item["isRecordingMP4"] = media.isRecording(Recorder::type_mp4);
+    item["isRecordingHLS"] = media.isRecording(Recorder::type_hls);
+    auto originSock = media.getOriginSock();
+    if (originSock) {
+        item["originSock"]["local_ip"] = originSock->get_local_ip();
+        item["originSock"]["local_port"] = originSock->get_local_port();
+        item["originSock"]["peer_ip"] = originSock->get_peer_ip();
+        item["originSock"]["peer_port"] = originSock->get_peer_port();
+        item["originSock"]["identifier"] = originSock->getIdentifier();
+    } else {
+        item["originSock"] = Json::nullValue;
+    }
+
+    for(auto &track : media.getTracks(false)){
+        Value obj;
+        auto codec_type = track->getTrackType();
+        obj["codec_id"] = track->getCodecId();
+        obj["codec_id_name"] = track->getCodecName();
+        obj["ready"] = track->ready();
+        obj["codec_type"] = codec_type;
+        switch(codec_type){
+            case TrackAudio : {
+                auto audio_track = dynamic_pointer_cast<AudioTrack>(track);
+                obj["sample_rate"] = audio_track->getAudioSampleRate();
+                obj["channels"] = audio_track->getAudioChannel();
+                obj["sample_bit"] = audio_track->getAudioSampleBit();
+                break;
+            }
+            case TrackVideo : {
+                auto video_track = dynamic_pointer_cast<VideoTrack>(track);
+                obj["width"] = video_track->getVideoWidth();
+                obj["height"] = video_track->getVideoHeight();
+                obj["fps"] = round(video_track->getVideoFps());
+                break;
+            }
+            default:
+                break;
+        }
+        item["tracks"].append(obj);
+    }
+    return item;
 }
 
 /**
@@ -312,8 +411,15 @@ void installWebApi() {
         int changed = API::Success;
         for (auto &pr : allArgs) {
             if (ini.find(pr.first) == ini.end()) {
+#if 1
                 //没有这个key
                 continue;
+#else
+                // 新增配置选项,为了动态添加多个ffmpeg cmd 模板
+                ini[pr.first] = pr.second;
+                // 防止changed变化
+                continue;
+#endif
             }
             if (ini[pr.first] == pr.second) {
                 continue;
@@ -370,62 +476,6 @@ void installWebApi() {
     });
 #endif//#if !defined(_WIN32)
 
-
-    static auto makeMediaSourceJson = [](const MediaSource::Ptr &media){
-        Value item;
-        item["schema"] = media->getSchema();
-        item["vhost"] = media->getVhost();
-        item["app"] = media->getApp();
-        item["stream"] = media->getId();
-        item["createStamp"] = (Json::UInt64) media->getCreateStamp();
-        item["aliveSecond"] = (Json::UInt64) media->getAliveSecond();
-        item["bytesSpeed"] = media->getBytesSpeed();
-        item["readerCount"] = media->readerCount();
-        item["totalReaderCount"] = media->totalReaderCount();
-        item["originType"] = (int) media->getOriginType();
-        item["originTypeStr"] = getOriginTypeString(media->getOriginType());
-        item["originUrl"] = media->getOriginUrl();
-        auto originSock = media->getOriginSock();
-        if (originSock) {
-            item["originSock"]["local_ip"] = originSock->get_local_ip();
-            item["originSock"]["local_port"] = originSock->get_local_port();
-            item["originSock"]["peer_ip"] = originSock->get_peer_ip();
-            item["originSock"]["peer_port"] = originSock->get_peer_port();
-            item["originSock"]["identifier"] = originSock->getIdentifier();
-        } else {
-            item["originSock"] = Json::nullValue;
-        }
-
-        for(auto &track : media->getTracks()){
-            Value obj;
-            auto codec_type = track->getTrackType();
-            obj["codec_id"] = track->getCodecId();
-            obj["codec_id_name"] = track->getCodecName();
-            obj["ready"] = track->ready();
-            obj["codec_type"] = codec_type;
-            switch(codec_type){
-                case TrackAudio : {
-                    auto audio_track = dynamic_pointer_cast<AudioTrack>(track);
-                    obj["sample_rate"] = audio_track->getAudioSampleRate();
-                    obj["channels"] = audio_track->getAudioChannel();
-                    obj["sample_bit"] = audio_track->getAudioSampleBit();
-                    break;
-                }
-                case TrackVideo : {
-                    auto video_track = dynamic_pointer_cast<VideoTrack>(track);
-                    obj["width"] = video_track->getVideoWidth();
-                    obj["height"] = video_track->getVideoHeight();
-                    obj["fps"] = round(video_track->getVideoFps());
-                    break;
-                }
-                default:
-                    break;
-            }
-            item["tracks"].append(obj);
-        }
-        return item;
-    };
-
     //获取流列表，可选筛选参数
     //测试url0(获取所有流) http://127.0.0.1/index/api/getMediaList
     //测试url1(获取虚拟主机为"__defaultVost__"的流) http://127.0.0.1/index/api/getMediaList?vhost=__defaultVost__
@@ -433,21 +483,9 @@ void installWebApi() {
     api_regist("/index/api/getMediaList",[](API_ARGS_MAP){
         CHECK_SECRET();
         //获取所有MediaSource列表
-        MediaSource::for_each_media([&](const MediaSource::Ptr &media){
-            if (!allArgs["schema"].empty() && allArgs["schema"] != media->getSchema()) {
-                return;
-            }
-            if (!allArgs["vhost"].empty() && allArgs["vhost"] != media->getVhost()) {
-                return;
-            }
-            if (!allArgs["app"].empty() && allArgs["app"] != media->getApp()) {
-                return;
-            }
-            if (!allArgs["stream"].empty() && allArgs["stream"] != media->getId()) {
-                return;
-            }
-            val["data"].append(makeMediaSourceJson(media));
-        });
+        MediaSource::for_each_media([&](const MediaSource::Ptr &media) {
+            val["data"].append(makeMediaSourceJson(*media));
+        }, allArgs["schema"], allArgs["vhost"], allArgs["app"], allArgs["stream"]);
     });
 
     //测试url http://127.0.0.1/index/api/isMediaOnline?schema=rtsp&vhost=__defaultVhost__&app=live&stream=obs
@@ -466,7 +504,7 @@ void installWebApi() {
             val["online"] = false;
             return;
         }
-        val = makeMediaSourceJson(src);
+        val = makeMediaSourceJson(*src);
         val["online"] = true;
         val["code"] = API::Success;
     });
@@ -501,22 +539,10 @@ void installWebApi() {
         int count_hit = 0;
         int count_closed = 0;
         list<MediaSource::Ptr> media_list;
-        MediaSource::for_each_media([&](const MediaSource::Ptr &media){
-            if(!allArgs["schema"].empty() && allArgs["schema"] != media->getSchema()){
-                return;
-            }
-            if(!allArgs["vhost"].empty() && allArgs["vhost"] != media->getVhost()){
-                return;
-            }
-            if(!allArgs["app"].empty() && allArgs["app"] != media->getApp()){
-                return;
-            }
-            if(!allArgs["stream"].empty() && allArgs["stream"] != media->getId()){
-                return;
-            }
+        MediaSource::for_each_media([&](const MediaSource::Ptr &media) {
             ++count_hit;
             media_list.emplace_back(media);
-        });
+        }, allArgs["schema"], allArgs["vhost"], allArgs["app"], allArgs["stream"]);
 
         bool force = allArgs["force"].as<bool>();
         for(auto &media : media_list){
@@ -537,7 +563,7 @@ void installWebApi() {
         uint16_t local_port = allArgs["local_port"].as<uint16_t>();
         string &peer_ip = allArgs["peer_ip"];
 
-        SessionMap::Instance().for_each_session([&](const string &id,const TcpSession::Ptr &session){
+        SessionMap::Instance().for_each_session([&](const string &id,const Session::Ptr &session){
             if(local_port != 0 && local_port != session->get_local_port()){
                 return;
             }
@@ -576,8 +602,8 @@ void installWebApi() {
         string &peer_ip = allArgs["peer_ip"];
         size_t count_hit = 0;
 
-        list<TcpSession::Ptr> session_list;
-        SessionMap::Instance().for_each_session([&](const string &id,const TcpSession::Ptr &session){
+        list<Session::Ptr> session_list;
+        SessionMap::Instance().for_each_session([&](const string &id,const Session::Ptr &session){
             if(local_port != 0 && local_port != session->get_local_port()){
                 return;
             }
@@ -594,13 +620,103 @@ void installWebApi() {
         val["count_hit"] = (Json::UInt64)count_hit;
     });
 
+    static auto addStreamPusherProxy = [](const string &schema,
+                                          const string &vhost,
+                                          const string &app,
+                                          const string &stream,
+                                          const string &url,
+                                          int retry_count,
+                                          int rtp_type,
+                                          float timeout_sec,
+                                          const function<void(const SockException &ex, const string &key)> &cb) {
+        auto key = getPusherKey(schema, vhost, app, stream, url);
+        auto src = MediaSource::find(schema, vhost, app, stream);
+        if (!src) {
+            cb(SockException(Err_other, "can not find the source stream"), key);
+            return;
+        }
+        lock_guard<recursive_mutex> lck(s_proxyPusherMapMtx);
+        if (s_proxyPusherMap.find(key) != s_proxyPusherMap.end()) {
+            //已经在推流了
+            cb(SockException(Err_success), key);
+            return;
+        }
+
+        //添加推流代理
+        PusherProxy::Ptr pusher(new PusherProxy(src, retry_count ? retry_count : -1));
+        s_proxyPusherMap[key] = pusher;
+
+        //指定RTP over TCP(播放rtsp时有效)
+        (*pusher)[kRtpType] = rtp_type;
+
+        if (timeout_sec > 0.1) {
+            //推流握手超时时间
+            (*pusher)[kTimeoutMS] = timeout_sec * 1000;
+        }
+
+        //开始推流，如果推流失败或者推流中止，将会自动重试若干次，默认一直重试
+        pusher->setPushCallbackOnce([cb, key, url](const SockException &ex) {
+            if (ex) {
+                WarnL << "Push " << url << " failed, key: " << key << ", err: " << ex.what();
+                lock_guard<recursive_mutex> lck(s_proxyPusherMapMtx);
+                s_proxyPusherMap.erase(key);
+            }
+            cb(ex, key);
+        });
+
+        //被主动关闭推流
+        pusher->setOnClose([key, url](const SockException &ex) {
+            WarnL << "Push " << url << " failed, key: " << key << ", err: " << ex.what();
+            lock_guard<recursive_mutex> lck(s_proxyPusherMapMtx);
+            s_proxyPusherMap.erase(key);
+        });
+        pusher->publish(url);
+    };
+
+    //动态添加rtsp/rtmp推流代理
+    //测试url http://127.0.0.1/index/api/addStreamPusherProxy?schema=rtmp&vhost=__defaultVhost__&app=proxy&stream=0&dst_url=rtmp://127.0.0.1/live/obs
+    api_regist("/index/api/addStreamPusherProxy", [](API_ARGS_MAP_ASYNC) {
+        CHECK_SECRET();
+        CHECK_ARGS("schema", "vhost", "app", "stream", "dst_url");
+        auto dst_url = allArgs["dst_url"];
+        addStreamPusherProxy(allArgs["schema"],
+                             allArgs["vhost"],
+                             allArgs["app"],
+                             allArgs["stream"],
+                             allArgs["dst_url"],
+                             allArgs["retry_count"],
+                             allArgs["rtp_type"],
+                             allArgs["timeout_sec"],
+                             [invoker, val, headerOut, dst_url](const SockException &ex, const string &key) mutable {
+                                 if (ex) {
+                                     val["code"] = API::OtherFailed;
+                                     val["msg"] = ex.what();
+                                 } else {
+                                     val["data"]["key"] = key;
+                                     InfoL << "Publish success, please play with player:" << dst_url;
+                                 }
+                                 invoker(200, headerOut, val.toStyledString());
+                             });
+    });
+
+    //关闭推流代理
+    //测试url http://127.0.0.1/index/api/delStreamPusherProxy?key=__defaultVhost__/proxy/0
+    api_regist("/index/api/delStreamPusherProxy", [](API_ARGS_MAP) {
+        CHECK_SECRET();
+        CHECK_ARGS("key");
+        lock_guard<recursive_mutex> lck(s_proxyPusherMapMtx);
+        val["data"]["flag"] = s_proxyPusherMap.erase(allArgs["key"]) == 1;
+    });
+
     static auto addStreamProxy = [](const string &vhost,
                                     const string &app,
                                     const string &stream,
                                     const string &url,
+                                    int retry_count,
                                     bool enable_hls,
                                     bool enable_mp4,
                                     int rtp_type,
+                                    float timeout_sec,
                                     const function<void(const SockException &ex,const string &key)> &cb){
         auto key = getProxyKey(vhost,app,stream);
         lock_guard<recursive_mutex> lck(s_proxyMapMtx);
@@ -610,11 +726,17 @@ void installWebApi() {
             return;
         }
         //添加拉流代理
-        PlayerProxy::Ptr player(new PlayerProxy(vhost, app, stream, enable_hls, enable_mp4));
+        PlayerProxy::Ptr player(new PlayerProxy(vhost, app, stream, enable_hls, enable_mp4, retry_count ? retry_count : -1));
         s_proxyMap[key] = player;
-        
+
         //指定RTP over TCP(播放rtsp时有效)
         (*player)[kRtpType] = rtp_type;
+
+        if (timeout_sec > 0.1) {
+            //播放握手超时时间
+            (*player)[kTimeoutMS] = timeout_sec * 1000;
+        }
+
         //开始播放，如果播放失败或者播放中止，将会自动重试若干次，默认一直重试
         player->setPlayCallbackOnce([cb,key](const SockException &ex){
             if(ex){
@@ -625,7 +747,7 @@ void installWebApi() {
         });
 
         //被主动关闭拉流
-        player->setOnClose([key](){
+        player->setOnClose([key](const SockException &ex){
             lock_guard<recursive_mutex> lck(s_proxyMapMtx);
             s_proxyMap.erase(key);
         });
@@ -641,15 +763,17 @@ void installWebApi() {
                        allArgs["app"],
                        allArgs["stream"],
                        allArgs["url"],
+                       allArgs["retry_count"],
                        allArgs["enable_hls"],/* 是否hls转发 */
                        allArgs["enable_mp4"],/* 是否MP4录制 */
                        allArgs["rtp_type"],
-                       [invoker,val,headerOut](const SockException &ex,const string &key){
-                           if(ex){
-                               const_cast<Value &>(val)["code"] = API::OtherFailed;
-                               const_cast<Value &>(val)["msg"] = ex.what();
-                           }else{
-                               const_cast<Value &>(val)["data"]["key"] = key;
+                       allArgs["timeout_sec"],
+                       [invoker,val,headerOut](const SockException &ex,const string &key) mutable{
+                           if (ex) {
+                               val["code"] = API::OtherFailed;
+                               val["msg"] = ex.what();
+                           } else {
+                               val["data"]["key"] = key;
                            }
                            invoker(200, headerOut, val.toStyledString());
                        });
@@ -708,12 +832,12 @@ void installWebApi() {
         auto enable_mp4 = allArgs["enable_mp4"].as<int>();
 
         addFFmpegSource(allArgs["ffmpeg_cmd_key"], src_url, dst_url, timeout_ms, enable_hls, enable_mp4,
-                        [invoker, val, headerOut](const SockException &ex, const string &key) {
+                        [invoker, val, headerOut](const SockException &ex, const string &key) mutable{
             if (ex) {
-                const_cast<Value &>(val)["code"] = API::OtherFailed;
-                const_cast<Value &>(val)["msg"] = ex.what();
+                val["code"] = API::OtherFailed;
+                val["msg"] = ex.what();
             } else {
-                const_cast<Value &>(val)["data"]["key"] = key;
+                val["data"]["key"] = key;
             }
             invoker(200, headerOut, val.toStyledString());
         });
@@ -815,12 +939,12 @@ void installWebApi() {
         }
 
         //src_port为空时，则随机本地端口
-        src->startSendRtp(allArgs["dst_url"], allArgs["dst_port"], allArgs["ssrc"], allArgs["is_udp"], allArgs["src_port"], [val, headerOut, invoker](uint16_t local_port, const SockException &ex){
+        src->startSendRtp(allArgs["dst_url"], allArgs["dst_port"], allArgs["ssrc"], allArgs["is_udp"], allArgs["src_port"], [val, headerOut, invoker](uint16_t local_port, const SockException &ex) mutable{
             if (ex) {
-                const_cast<Value &>(val)["code"] = API::OtherFailed;
-                const_cast<Value &>(val)["msg"] = ex.what();
+                val["code"] = API::OtherFailed;
+                val["msg"] = ex.what();
             }
-            const_cast<Value &>(val)["local_port"] = local_port;
+            val["local_port"] = local_port;
             invoker(200, headerOut, val.toStyledString());
         });
     });
@@ -844,30 +968,23 @@ void installWebApi() {
         CHECK_SECRET();
         CHECK_ARGS("stream_id");
         //只是暂停流的检查，流媒体服务器做为流负载服务，收流就转发，RTSP/RTMP有自己暂停协议
-        lock_guard<recursive_mutex> lck(s_rtpServerMapMtx);
-        auto it = s_rtpServerMap.find(allArgs["stream_id"]);
-        if (it == s_rtpServerMap.end()) {
-            val["hit"] = 0;
-            return;
+        auto rtp_process = RtpSelector::Instance().getProcess(allArgs["stream_id"], false);
+        if (rtp_process) {
+            rtp_process->setStopCheckRtp(true);
+        } else {
+            val["code"] = API::NotFound;
         }
-        auto server = it->second;
-        server->pauseRtpCheck();
-        val["hit"] = 1;
     });
 
     api_regist("/index/api/resumeRtpCheck", [](API_ARGS_MAP) {
         CHECK_SECRET();
         CHECK_ARGS("stream_id");
-
-        lock_guard<recursive_mutex> lck(s_rtpServerMapMtx);
-        auto it = s_rtpServerMap.find(allArgs["stream_id"]);
-        if (it == s_rtpServerMap.end()) {
-            val["hit"] = 0;
-            return;
+        auto rtp_process = RtpSelector::Instance().getProcess(allArgs["stream_id"], false);
+        if (rtp_process) {
+            rtp_process->setStopCheckRtp(false);
+        } else {
+            val["code"] = API::NotFound;
         }
-        auto server = it->second;
-        server->resumeRtpCheck();
-        val["hit"] = 1;
     });
 
 #endif//ENABLE_RTPPROXY
@@ -877,10 +994,11 @@ void installWebApi() {
         CHECK_SECRET();
         CHECK_ARGS("type","vhost","app","stream");
         auto result = Recorder::startRecord((Recorder::type) allArgs["type"].as<int>(),
-                                              allArgs["vhost"],
-                                              allArgs["app"],
-                                              allArgs["stream"],
-                                              allArgs["customized_path"]);
+                                            allArgs["vhost"],
+                                            allArgs["app"],
+                                            allArgs["stream"],
+                                            allArgs["customized_path"],
+                                            allArgs["max_second"].as<size_t>());
         val["result"] = result;
         val["code"] = result ? API::Success : API::OtherFailed;
         val["msg"] = result ? "success" :  "start record failed";
@@ -1035,6 +1153,8 @@ void installWebApi() {
 
         val["data"]["TcpServer"] = (Json::UInt64)(ObjectStatistic<TcpServer>::count());
         val["data"]["TcpSession"] = (Json::UInt64)(ObjectStatistic<TcpSession>::count());
+        val["data"]["UdpServer"] = (Json::UInt64)(ObjectStatistic<UdpServer>::count());
+        val["data"]["UdpSession"] = (Json::UInt64)(ObjectStatistic<UdpSession>::count());
         val["data"]["TcpClient"] = (Json::UInt64)(ObjectStatistic<TcpClient>::count());
         val["data"]["Socket"] = (Json::UInt64)(ObjectStatistic<Socket>::count());
 
@@ -1054,6 +1174,90 @@ void installWebApi() {
         val["data"]["totalMemUsageMB"] = (int)(bytes / 1024 / 1024);
 #endif
     });
+
+#ifdef ENABLE_WEBRTC
+    api_regist("/index/api/webrtc",[](API_ARGS_STRING_ASYNC){
+        CHECK_ARGS("app", "stream");
+
+        auto offer_sdp = allArgs.Content();
+        auto type = allArgs.getUrlArgs()["type"];
+        MediaInfo info(StrPrinter << "rtc://" << headerIn["Host"] << "/" << allArgs.getUrlArgs()["app"] << "/" << allArgs.getUrlArgs()["stream"] << "?" << allArgs.Params());
+
+        //设置返回类型
+        headerOut["Content-Type"] = HttpFileManager::getContentType(".json");
+        //设置跨域
+        headerOut["Access-Control-Allow-Origin"] = "*";
+
+        if (type.empty() || !strcasecmp(type.data(), "play")) {
+            Broadcast::AuthInvoker authInvoker = [invoker, offer_sdp, val, info, headerOut](const string &err) mutable {
+                try {
+                    auto src = dynamic_pointer_cast<RtspMediaSource>(MediaSource::find(RTSP_SCHEMA, info._vhost, info._app, info._streamid));
+                    if (!src) {
+                        throw runtime_error("流不存在");
+                    }
+                    if (!err.empty()) {
+                        throw runtime_error(StrPrinter << "播放鉴权失败:" << err);
+                    }
+                    auto rtc = WebRtcTransportImp::create(EventPollerPool::Instance().getPoller());
+                    rtc->attach(src, info, true);
+                    val["sdp"] = rtc->getAnswerSdp(offer_sdp);
+                    val["type"] = "answer";
+                    invoker(200, headerOut, val.toStyledString());
+                } catch (std::exception &ex) {
+                    val["code"] = API::Exception;
+                    val["msg"] = ex.what();
+                    invoker(200, headerOut, val.toStyledString());
+                }
+            };
+
+            //广播通用播放url鉴权事件
+            auto flag = NoticeCenter::Instance().emitEvent(Broadcast::kBroadcastMediaPlayed, info, authInvoker, sender);
+            if (!flag) {
+                //该事件无人监听,默认不鉴权
+                authInvoker("");
+            }
+            return;
+        }
+
+        if (!strcasecmp(type.data(), "push")) {
+            Broadcast::PublishAuthInvoker authInvoker = [invoker, offer_sdp, val, info, headerOut](const string &err, bool enableHls, bool enableMP4) mutable {
+                try {
+                    auto src = dynamic_pointer_cast<RtspMediaSource>(MediaSource::find(RTSP_SCHEMA, info._vhost, info._app, info._streamid));
+                    if (src) {
+                        throw std::runtime_error("已经在推流");
+                    }
+                    if (!err.empty()) {
+                        throw runtime_error(StrPrinter << "推流鉴权失败:" << err);
+                    }
+                    auto push_src = std::make_shared<RtspMediaSourceImp>(info._vhost, info._app, info._streamid);
+                    push_src->setProtocolTranslation(enableHls, enableMP4);
+                    auto rtc = WebRtcTransportImp::create(EventPollerPool::Instance().getPoller());
+                    push_src->setListener(rtc);
+                    rtc->attach(push_src, info, false);
+                    val["sdp"] = rtc->getAnswerSdp(offer_sdp);
+                    val["type"] = "answer";
+                    invoker(200, headerOut, val.toStyledString());
+                } catch (std::exception &ex) {
+                    val["code"] = API::Exception;
+                    val["msg"] = ex.what();
+                    invoker(200, headerOut, val.toStyledString());
+                }
+            };
+
+            //rtsp推流需要鉴权
+            auto flag = NoticeCenter::Instance().emitEvent(Broadcast::kBroadcastMediaPublish, info, authInvoker, sender);
+            if (!flag) {
+                //该事件无人监听,默认不鉴权
+                GET_CONFIG(bool, toHls, General::kPublishToHls);
+                GET_CONFIG(bool, toMP4, General::kPublishToMP4);
+                authInvoker("", toHls, toMP4);
+            }
+            return;
+        }
+
+        throw ApiRetException("不支持该类型", API::InvalidArgs);
+    });
+#endif
 
     ////////////以下是注册的Hook API////////////
     api_regist("/index/hook/on_publish",[](API_ARGS_MAP){
@@ -1089,7 +1293,7 @@ void installWebApi() {
         val["passwd"] = allArgs["user_name"].data();
     });
 
-    api_regist("/index/hook/on_stream_changed",[](API_ARGS_MAP){
+    api_regist("/index/hook/on_stream_changed",[](API_ARGS_JSON){
         //媒体注册或反注册事件
     });
 
@@ -1115,12 +1319,12 @@ void installWebApi() {
                         (1000 * timeout_sec) - 500,
                         false,
                         false,
-                        [invoker,val,headerOut](const SockException &ex,const string &key){
+                        [invoker,val,headerOut](const SockException &ex,const string &key) mutable{
                             if(ex){
-                                const_cast<Value &>(val)["code"] = API::OtherFailed;
-                                const_cast<Value &>(val)["msg"] = ex.what();
+                                val["code"] = API::OtherFailed;
+                                val["msg"] = ex.what();
                             }else{
-                                const_cast<Value &>(val)["data"]["key"] = key;
+                                val["data"]["key"] = key;
                             }
                             invoker(200, headerOut, val.toStyledString());
                         });
@@ -1137,15 +1341,17 @@ void installWebApi() {
                        allArgs["stream"],
                        /** 支持rtsp和rtmp方式拉流 ，rtsp支持h265/h264/aac,rtmp仅支持h264/aac **/
                        "rtsp://184.72.239.149/vod/mp4:BigBuckBunny_115k.mov",
+                       -1,/*无限重试*/
                        true,/* 开启hls转发 */
                        false,/* 禁用MP4录制 */
                        0,//rtp over tcp方式拉流
-                       [invoker,val,headerOut](const SockException &ex,const string &key){
+                       10,//10秒超时
+                       [invoker,val,headerOut](const SockException &ex,const string &key) mutable{
                            if(ex){
-                               const_cast<Value &>(val)["code"] = API::OtherFailed;
-                               const_cast<Value &>(val)["msg"] = ex.what();
+                               val["code"] = API::OtherFailed;
+                               val["msg"] = ex.what();
                            }else{
-                               const_cast<Value &>(val)["data"]["key"] = key;
+                               val["data"]["key"] = key;
                            }
                            invoker(200, headerOut, val.toStyledString());
                        });

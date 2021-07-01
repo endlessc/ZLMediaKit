@@ -205,7 +205,7 @@ void RtspPlayer::handleResDESCRIBE(const Parser& parser) {
     }
     _rtcp_context.clear();
     for (auto &track : _sdp_track) {
-        _rtcp_context.emplace_back(std::make_shared<RtcpContext>(track->_samplerate, true));
+        _rtcp_context.emplace_back(std::make_shared<RtcpContext>(true));
     }
     sendSetup(0);
 }
@@ -306,7 +306,7 @@ void RtspPlayer::handleResSETUP(const Parser &parser, unsigned int track_idx) {
             rtpto.sin_port = ntohs(rtp_port);
             rtpto.sin_family = AF_INET;
             rtpto.sin_addr.s_addr = inet_addr(get_peer_ip().data());
-            pRtpSockRef->setSendPeerAddr((struct sockaddr *)&(rtpto));
+            pRtpSockRef->bindPeerAddr((struct sockaddr *)&(rtpto));
             //发送rtp打洞包
             pRtpSockRef->send("\xce\xfa\xed\xfe", 4);
 
@@ -314,7 +314,7 @@ void RtspPlayer::handleResSETUP(const Parser &parser, unsigned int track_idx) {
             rtpto.sin_port = ntohs(rtcp_port);
             rtpto.sin_family = AF_INET;
             rtpto.sin_addr.s_addr = inet_addr(get_peer_ip().data());
-            pRtcpSockRef->setSendPeerAddr((struct sockaddr *)&(rtpto));
+            pRtcpSockRef->bindPeerAddr((struct sockaddr *)&(rtpto));
         }
 
         auto srcIP = inet_addr(get_peer_ip().data());
@@ -591,7 +591,7 @@ void RtspPlayer::sendRtspRequest(const string &cmd, const string &url,const StrC
 
 void RtspPlayer::onBeforeRtpSorted(const RtpPacket::Ptr &rtp, int track_idx){
     auto &rtcp_ctx = _rtcp_context[track_idx];
-    rtcp_ctx->onRtp(rtp->getSeq(), rtp->getStampMS(), rtp->size() - RtpPacket::kRtpTcpHeaderSize);
+    rtcp_ctx->onRtp(rtp->getSeq(), ntohl(rtp->getHeader()->stamp), rtp->size() - RtpPacket::kRtpTcpHeaderSize);
 
     auto &ticker = _rtcp_send_ticker[track_idx];
     if (ticker.elapsedTime() < 3 * 1000) {

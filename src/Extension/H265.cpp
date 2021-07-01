@@ -51,7 +51,7 @@ bool getHEVCInfo(const string &strVps, const string &strSps, int &iVideoWidth, i
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 bool H265Frame::keyFrame() const {
-    return isKeyFrame(H265_TYPE(_buffer[_prefix_size]));
+    return isKeyFrame(H265_TYPE(_buffer[_prefix_size]), _buffer.data() + _prefix_size);
 }
 
 bool H265Frame::configFrame() const {
@@ -63,8 +63,11 @@ bool H265Frame::configFrame() const {
     }
 }
 
-bool H265Frame::isKeyFrame(int type) {
-    return type >= NAL_BLA_W_LP && type <= NAL_RSV_IRAP_VCL23;
+bool H265Frame::isKeyFrame(int type, const char *ptr) {
+    if (ptr) {
+        return (((*((uint8_t *) ptr + 2)) >> 7) & 0x01) == 1 && (type == NAL_IDR_N_LP || type == NAL_IDR_W_RADL);
+    }
+    return false;
 }
 
 H265Frame::H265Frame(){
@@ -83,7 +86,7 @@ H265FrameNoCacheAble::H265FrameNoCacheAble(char *ptr, size_t size, uint32_t dts,
 }
 
 bool H265FrameNoCacheAble::keyFrame() const {
-    return H265Frame::isKeyFrame(H265_TYPE(((uint8_t *) _ptr)[_prefix_size]));
+    return H265Frame::isKeyFrame(H265_TYPE(((uint8_t *) _ptr)[_prefix_size]), _ptr + _prefix_size);
 }
 
 bool H265FrameNoCacheAble::configFrame() const {
@@ -152,13 +155,12 @@ void H265Track::inputFrame(const Frame::Ptr &frame) {
 
 void H265Track::inputFrame_l(const Frame::Ptr &frame) {
     int type = H265_TYPE(((uint8_t *) frame->data() + frame->prefixSize())[0]);
-    if (H265Frame::isKeyFrame(type)) {
+    if (H265Frame::isKeyFrame(type, frame->data() + frame->prefixSize())) {
         insertConfigFrame(frame);
         VideoTrack::inputFrame(frame);
         _is_idr = true;
         return;
     }
-
     _is_idr = false;
 
     //非idr帧
@@ -186,7 +188,11 @@ void H265Track::inputFrame_l(const Frame::Ptr &frame) {
 }
 
 void H265Track::onReady() {
-    getHEVCInfo(_vps, _sps, _width, _height, _fps);
+    if (!getHEVCInfo(_vps, _sps, _width, _height, _fps)) {
+        _vps.clear();
+        _sps.clear();
+        _pps.clear();
+    }
 }
 
 Track::Ptr H265Track::clone() {
@@ -248,7 +254,7 @@ public:
         if (bitrate) {
             _printer << "b=AS:" << bitrate << "\r\n";
         }
-        _printer << "a=rtpmap:" << payload_type << " H265/" << 90000 << "\r\n";
+        _printer << "a=rtpmap:" << payload_type << " " << getCodecName() << "/" << 90000 << "\r\n";
         _printer << "a=fmtp:" << payload_type << " ";
         _printer << "sprop-vps=";
         _printer << encodeBase64(strVPS) << "; ";

@@ -107,8 +107,8 @@ int MultiMuxerPrivate::totalReaderCount() const {
            (hls ? hls->readerCount() : 0);
 }
 
-static std::shared_ptr<MediaSinkInterface> makeRecorder(const vector<Track::Ptr> &tracks, Recorder::type type, const string &custom_path, MediaSource &sender){
-    auto recorder = Recorder::createRecorder(type, sender.getVhost(), sender.getApp(), sender.getId(), custom_path);
+static std::shared_ptr<MediaSinkInterface> makeRecorder(MediaSource &sender, const vector<Track::Ptr> &tracks, Recorder::type type, const string &custom_path, size_t max_second){
+    auto recorder = Recorder::createRecorder(type, sender.getVhost(), sender.getApp(), sender.getId(), custom_path, max_second);
     for (auto &track : tracks) {
         recorder->addTrack(track);
     }
@@ -116,12 +116,12 @@ static std::shared_ptr<MediaSinkInterface> makeRecorder(const vector<Track::Ptr>
 }
 
 //此函数可能跨线程调用
-bool MultiMuxerPrivate::setupRecord(MediaSource &sender, Recorder::type type, bool start, const string &custom_path){
+bool MultiMuxerPrivate::setupRecord(MediaSource &sender, Recorder::type type, bool start, const string &custom_path, size_t max_second){
     switch (type) {
         case Recorder::type_hls : {
             if (start && !_hls) {
                 //开始录制
-                auto hls = dynamic_pointer_cast<HlsRecorder>(makeRecorder(getTracks(true), type, custom_path, sender));
+                auto hls = dynamic_pointer_cast<HlsRecorder>(makeRecorder(sender, getTracks(true), type, custom_path, max_second));
                 if (hls) {
                     //设置HlsMediaSource的事件监听器
                     hls->setListener(_listener);
@@ -136,7 +136,7 @@ bool MultiMuxerPrivate::setupRecord(MediaSource &sender, Recorder::type type, bo
         case Recorder::type_mp4 : {
             if (start && !_mp4) {
                 //开始录制
-                _mp4 = makeRecorder(getTracks(true), type, custom_path, sender);
+                _mp4 = makeRecorder(sender, getTracks(true), type, custom_path, max_second);
             } else if (!start && _mp4) {
                 //停止录制
                 _mp4 = nullptr;
@@ -307,7 +307,11 @@ void MultiMediaSourceMuxer::setTrackListener(const std::weak_ptr<MultiMuxerPriva
 }
 
 int MultiMediaSourceMuxer::totalReaderCount() const {
+#if defined(ENABLE_RTPPROXY)
+    return _muxer->totalReaderCount() + (int)_rtp_sender.size();
+#else
     return _muxer->totalReaderCount();
+#endif
 }
 
 void MultiMediaSourceMuxer::setTimeStamp(uint32_t stamp) {
@@ -326,15 +330,15 @@ int MultiMediaSourceMuxer::totalReaderCount(MediaSource &sender) {
     return listener->totalReaderCount(sender);
 }
 
-bool MultiMediaSourceMuxer::setupRecord(MediaSource &sender, Recorder::type type, bool start, const string &custom_path) {
-    return _muxer->setupRecord(sender, type, start, custom_path);
+bool MultiMediaSourceMuxer::setupRecord(MediaSource &sender, Recorder::type type, bool start, const string &custom_path, size_t max_second) {
+    return _muxer->setupRecord(sender, type, start, custom_path, max_second);
 }
 
 bool MultiMediaSourceMuxer::isRecording(MediaSource &sender, Recorder::type type) {
     return _muxer->isRecording(sender,type);
 }
 
-void MultiMediaSourceMuxer::startSendRtp(MediaSource &sender, const string &dst_url, uint16_t dst_port, const string &ssrc, bool is_udp, uint16_t src_port, const function<void(uint16_t local_port, const SockException &ex)> &cb){
+void MultiMediaSourceMuxer::startSendRtp(MediaSource &, const string &dst_url, uint16_t dst_port, const string &ssrc, bool is_udp, uint16_t src_port, const function<void(uint16_t local_port, const SockException &ex)> &cb){
 #if defined(ENABLE_RTPPROXY)
     RtpSender::Ptr rtp_sender = std::make_shared<RtpSender>(atoi(ssrc.data()));
     weak_ptr<MultiMediaSourceMuxer> weak_self = shared_from_this();
@@ -356,8 +360,14 @@ void MultiMediaSourceMuxer::startSendRtp(MediaSource &sender, const string &dst_
 #endif//ENABLE_RTPPROXY
 }
 
-bool MultiMediaSourceMuxer::stopSendRtp(MediaSource &sender, const string& ssrc){
+bool MultiMediaSourceMuxer::stopSendRtp(MediaSource &sender, const string &ssrc) {
 #if defined(ENABLE_RTPPROXY)
+    if (&sender != MediaSource::NullMediaSource) {
+        onceToken token(nullptr, [&]() {
+            //关闭rtp推流，可能触发无人观看事件
+            MediaSourceEventInterceptor::onReaderChanged(sender, totalReaderCount());
+        });
+    }
     if (ssrc.empty()) {
         //关闭全部
         lock_guard<mutex> lck(_rtp_sender_mtx);

@@ -101,6 +101,7 @@ public:
      */
     virtual void setMetaData(const AMFValue &metadata) {
         _metadata = metadata;
+        _metadata.set("server", SERVER_NAME);
         if (_ring) {
             regist();
         }
@@ -131,7 +132,10 @@ public:
         if (pkt->isCfgFrame()) {
             lock_guard<recursive_mutex> lock(_mtx);
             _config_frame_map[pkt->type_id] = pkt;
-            return;
+            if (!_ring) {
+                //注册后收到config帧更新到各播放器
+                return;
+            }
         }
 
         if (!_ring) {

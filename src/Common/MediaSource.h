@@ -45,7 +45,8 @@ enum class MediaOriginType : uint8_t {
     pull,
     ffmpeg_pull,
     mp4_vod,
-    device_chn
+    device_chn,
+    rtc_push,
 };
 
 string getOriginTypeString(MediaOriginType type);
@@ -77,7 +78,7 @@ public:
 
     ////////////////////////仅供MultiMediaSourceMuxer对象继承////////////////////////
     // 开启或关闭录制
-    virtual bool setupRecord(MediaSource &sender, Recorder::type type, bool start, const string &custom_path) { return false; };
+    virtual bool setupRecord(MediaSource &sender, Recorder::type type, bool start, const string &custom_path, size_t max_second) { return false; };
     // 获取录制状态
     virtual bool isRecording(MediaSource &sender, Recorder::type type) { return false; };
     // 获取所有track相关信息
@@ -109,7 +110,7 @@ public:
     int totalReaderCount(MediaSource &sender) override;
     void onReaderChanged(MediaSource &sender, int size) override;
     void onRegist(MediaSource &sender, bool regist) override;
-    bool setupRecord(MediaSource &sender, Recorder::type type, bool start, const string &custom_path) override;
+    bool setupRecord(MediaSource &sender, Recorder::type type, bool start, const string &custom_path, size_t max_second) override;
     bool isRecording(MediaSource &sender, Recorder::type type) override;
     vector<Track::Ptr> getTracks(MediaSource &sender, bool trackReady = true) const override;
     void startSendRtp(MediaSource &sender, const string &dst_url, uint16_t dst_port, const string &ssrc, bool is_udp, uint16_t src_port, const function<void(uint16_t local_port, const SockException &ex)> &cb) override;
@@ -191,11 +192,12 @@ private:
  */
 class MediaSource: public TrackSource, public enable_shared_from_this<MediaSource> {
 public:
-    typedef std::shared_ptr<MediaSource> Ptr;
-    typedef unordered_map<string, weak_ptr<MediaSource> > StreamMap;
-    typedef unordered_map<string, StreamMap > AppStreamMap;
-    typedef unordered_map<string, AppStreamMap > VhostAppStreamMap;
-    typedef unordered_map<string, VhostAppStreamMap > SchemaVhostAppStreamMap;
+    static constexpr MediaSource *NullMediaSource = nullptr;
+    using Ptr = std::shared_ptr<MediaSource>;
+    using StreamMap = unordered_map<string, weak_ptr<MediaSource> >;
+    using AppStreamMap = unordered_map<string, StreamMap>;
+    using VhostAppStreamMap = unordered_map<string, AppStreamMap>;
+    using SchemaVhostAppStreamMap = unordered_map<string, VhostAppStreamMap>;
 
     MediaSource(const string &schema, const string &vhost, const string &app, const string &stream_id) ;
     virtual ~MediaSource() ;
@@ -252,7 +254,7 @@ public:
     // 该流观看人数变化
     void onReaderChanged(int size);
     // 开启或关闭录制
-    bool setupRecord(Recorder::type type, bool start, const string &custom_path);
+    bool setupRecord(Recorder::type type, bool start, const string &custom_path, size_t max_second);
     // 获取录制状态
     bool isRecording(Recorder::type type);
     // 开始发送ps-rtp
@@ -271,7 +273,11 @@ public:
     // 异步查找流
     static void findAsync(const MediaInfo &info, const std::shared_ptr<TcpSession> &session, const function<void(const Ptr &src)> &cb);
     // 遍历所有流
-    static void for_each_media(const function<void(const Ptr &src)> &cb);
+    static void for_each_media(const function<void(const Ptr &src)> &cb,
+                               const string &schema = "",
+                               const string &vhost = "",
+                               const string &app = "",
+                               const string &stream = "");
     // 从mp4文件生成MediaSource
     static MediaSource::Ptr createFromMP4(const string &schema, const string &vhost, const string &app, const string &stream, const string &file_path = "", bool check_app = true);
 

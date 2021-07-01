@@ -15,7 +15,10 @@ using namespace toolkit;
 
 namespace mediakit{
 
-static bool getAVCInfo(const char * sps,size_t sps_len,int &iVideoWidth, int &iVideoHeight, float  &iVideoFps){
+static bool getAVCInfo(const char *sps, size_t sps_len,int &iVideoWidth, int &iVideoHeight, float  &iVideoFps){
+    if (sps_len < 4) {
+        return false;
+    }
     T_GetBitContext tGetBitBuf;
     T_SPS tH264SpsInfo;
     memset(&tGetBitBuf,0,sizeof(tGetBitBuf));
@@ -157,7 +160,10 @@ void H264Track::inputFrame(const Frame::Ptr &frame) {
 }
 
 void H264Track::onReady(){
-    getAVCInfo(_sps,_width,_height,_fps);
+    if (!getAVCInfo(_sps, _width, _height, _fps)) {
+        _sps.clear();
+        _pps.clear();
+    }
 }
 
 Track::Ptr H264Track::clone() {
@@ -175,17 +181,15 @@ void H264Track::inputFrame_l(const Frame::Ptr &frame){
             _pps = string(frame->data() + frame->prefixSize(), frame->size() - frame->prefixSize());
             break;
         }
-        case H264Frame::NAL_IDR: {
-            insertConfigFrame(frame);
-            VideoTrack::inputFrame(frame);
-            break;
-        }
         case H264Frame::NAL_AUD: {
             //忽略AUD帧;
             break;
         }
 
         default:
+            if (frame->keyFrame()) {
+                insertConfigFrame(frame);
+            }
             VideoTrack::inputFrame(frame);
             break;
     }
@@ -229,25 +233,25 @@ public:
         if (bitrate) {
             _printer << "b=AS:" << bitrate << "\r\n";
         }
-        _printer << "a=rtpmap:" << payload_type << " H264/" << 90000 << "\r\n";
+        _printer << "a=rtpmap:" << payload_type << " " << getCodecName() << "/" << 90000 << "\r\n";
         _printer << "a=fmtp:" << payload_type << " packetization-mode=1; profile-level-id=";
 
-        char strTemp[100];
+        char strTemp[1024];
         uint32_t profile_level_id = 0;
         if (strSPS.length() >= 4) { // sanity check
             profile_level_id = (uint8_t(strSPS[1]) << 16) |
                                (uint8_t(strSPS[2]) << 8) |
                                (uint8_t(strSPS[3])); // profile_idc|constraint_setN_flag|level_idc
         }
-        memset(strTemp, 0, 100);
+        memset(strTemp, 0, sizeof(strTemp));
         snprintf(strTemp, sizeof(strTemp), "%06X", profile_level_id);
         _printer << strTemp;
         _printer << "; sprop-parameter-sets=";
-        memset(strTemp, 0, 100);
-        av_base64_encode(strTemp, 100, (uint8_t *) strSPS.data(), (int) strSPS.size());
+        memset(strTemp, 0, sizeof(strTemp));
+        av_base64_encode(strTemp, sizeof(strTemp), (uint8_t *) strSPS.data(), (int) strSPS.size());
         _printer << strTemp << ",";
-        memset(strTemp, 0, 100);
-        av_base64_encode(strTemp, 100, (uint8_t *) strPPS.data(), (int) strPPS.size());
+        memset(strTemp, 0, sizeof(strTemp));
+        av_base64_encode(strTemp, sizeof(strTemp), (uint8_t *) strPPS.data(), (int) strPPS.size());
         _printer << strTemp << "\r\n";
         _printer << "a=control:trackID=" << (int) TrackVideo << "\r\n";
     }
@@ -275,7 +279,8 @@ Sdp::Ptr H264Track::getSdp() {
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
 bool H264Frame::keyFrame() const {
-    return H264_TYPE(_buffer[_prefix_size]) == H264Frame::NAL_IDR;
+    //多slice 一帧的情况下检查 first_mb_in_slice 是否为0 表示其为一帧的开始
+    return H264_TYPE(_buffer[_prefix_size]) == H264Frame::NAL_IDR && (_buffer[_prefix_size + 1] & 0x80);
 }
 
 bool H264Frame::configFrame() const {

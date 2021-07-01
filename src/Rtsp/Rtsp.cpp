@@ -188,7 +188,7 @@ void SdpParser::load(const string &sdp) {
                     char rtp[16] = {0}, type[16];
                     if (4 == sscanf(opt_val.data(), " %15[^ ] %d %15[^ ] %d", type, &port, rtp, &pt)) {
                         track->_pt = pt;
-                        track->_samplerate = RtpPayload::getClockRate(pt) ;
+                        track->_samplerate = RtpPayload::getClockRate(pt);
                         track->_channel = RtpPayload::getAudioChannel(pt);
                         track->_type = toTrackType(type);
                         track->_m = opt_val;
@@ -223,14 +223,14 @@ void SdpParser::load(const string &sdp) {
                 if (strcmp(start, "now") == 0) {
                     strcpy(start, "0");
                 }
-                track._start = (float)atof(start);
-                track._end = (float)atof(end);
+                track._start = (float) atof(start);
+                track._end = (float) atof(end);
                 track._duration = track._end - track._start;
             }
         }
 
         it = track._attr.find("rtpmap");
-        if(it != track._attr.end()){
+        if (it != track._attr.end()) {
             auto rtpmap = it->second;
             int pt, samplerate, channel;
             char codec[16] = {0};
@@ -239,20 +239,24 @@ void SdpParser::load(const string &sdp) {
                 track._codec = codec;
                 track._samplerate = samplerate;
                 track._channel = channel;
-            }else if (3 == sscanf(rtpmap.data(), "%d %15[^/]/%d", &pt, codec, &samplerate)) {
+            } else if (3 == sscanf(rtpmap.data(), "%d %15[^/]/%d", &pt, codec, &samplerate)) {
                 track._pt = pt;
                 track._codec = codec;
                 track._samplerate = samplerate;
             }
+            if (!track._samplerate && track._type == TrackVideo) {
+                //未设置视频采样率时，赋值为90000
+                track._samplerate = 90000;
+            }
         }
 
         it = track._attr.find("fmtp");
-        if(it != track._attr.end()) {
+        if (it != track._attr.end()) {
             track._fmtp = it->second;
         }
 
         it = track._attr.find("control");
-        if(it != track._attr.end()) {
+        if (it != track._attr.end()) {
             track._control = it->second;
         }
     }
@@ -454,9 +458,18 @@ size_t RtpHeader::getExtSize() const {
         return 0;
     }
     auto ext_ptr = &payload + getCsrcSize();
-    uint16_t reserved = AV_RB16(ext_ptr);
+    //uint16_t reserved = AV_RB16(ext_ptr);
     //每个ext占用4字节
     return AV_RB16(ext_ptr + 2) << 2;
+}
+
+uint16_t RtpHeader::getExtReserved() const{
+    //rtp有ext
+    if (!ext) {
+        return 0;
+    }
+    auto ext_ptr = &payload + getCsrcSize();
+    return AV_RB16(ext_ptr);
 }
 
 uint8_t *RtpHeader::getExtData() {
@@ -465,7 +478,7 @@ uint8_t *RtpHeader::getExtData() {
     }
     auto ext_ptr = &payload + getCsrcSize();
     //多出的4个字节分别为reserved、ext_len
-    return ext_ptr + 4 + getExtSize();
+    return ext_ptr + 4;
 }
 
 size_t RtpHeader::getPayloadOffset() const {
@@ -515,6 +528,10 @@ string RtpHeader::dumpString(size_t rtp_size) const{
 RtpHeader* RtpPacket::getHeader(){
     //需除去rtcp over tcp 4个字节长度
     return (RtpHeader*)(data() + RtpPacket::kRtpTcpHeaderSize);
+}
+
+string RtpPacket::dumpString() const{
+    return ((RtpPacket *) this)->getHeader()->dumpString(size() - RtpPacket::kRtpTcpHeaderSize);
 }
 
 uint16_t RtpPacket::getSeq(){
