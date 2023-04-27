@@ -14,6 +14,8 @@
 #include "Util/logger.h"
 #include "Util/onceToken.h"
 #include "Util/CMD.h"
+#include "Common/config.h"
+#include "Common/Parser.h"
 #include "Rtsp/Rtsp.h"
 #include "Thread/WorkThreadPool.h"
 #include "Pusher/MediaPusher.h"
@@ -140,15 +142,19 @@ int main(int argc, char *argv[]) {
     //设置合并写
     mINI::Instance()[General::kMergeWriteMS] = merge_ms;
 
+    ProtocolOption option;
+    option.enable_hls = false;
+    option.enable_mp4 = false;
+
     //添加拉流代理
-    auto proxy = std::make_shared<PlayerProxy>(DEFAULT_VHOST, "app", "test", false, false);
+    auto proxy = std::make_shared<PlayerProxy>(DEFAULT_VHOST, "app", "test", option);
     //rtsp拉流代理方式
-    (*proxy)[kRtpType] = rtp_type;
+    (*proxy)[Client::kRtpType] = rtp_type;
     //开始拉流代理
     proxy->play(in_url);
 
     auto get_src = [schema]() {
-        return MediaSource::find(schema, DEFAULT_VHOST, "app", "test");
+        return MediaSource::find(schema, DEFAULT_VHOST, "app", "test", false);
     };
 
     //推流器map

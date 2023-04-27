@@ -12,6 +12,8 @@
 #include "H264.h"
 #include "H265.h"
 #include "Common/Parser.h"
+#include "Common/Stamp.h"
+
 using namespace std;
 using namespace toolkit;
 
@@ -22,83 +24,6 @@ namespace toolkit {
 
 namespace mediakit{
 
-template<typename C>
-std::shared_ptr<C> FrameImp::create_l() {
-#if 0
-    static ResourcePool<C> packet_pool;
-    static onceToken token([]() {
-        packet_pool.setSize(1024);
-    });
-    auto ret = packet_pool.obtain();
-    ret->_buffer.clear();
-    ret->_prefix_size = 0;
-    ret->_dts = 0;
-    ret->_pts = 0;
-    return ret;
-#else
-    return std::shared_ptr<C>(new C());
-#endif
-}
-
-#define CREATE_FRAME_IMP(C) \
-template<> \
-std::shared_ptr<C> FrameImp::create<C>() { \
-    return create_l<C>(); \
-}
-
-CREATE_FRAME_IMP(FrameImp);
-CREATE_FRAME_IMP(H264Frame);
-CREATE_FRAME_IMP(H265Frame);
-
-/**
- * 该对象的功能是把一个不可缓存的帧转换成可缓存的帧
- */
-class FrameCacheAble : public FrameFromPtr {
-public:
-    typedef std::shared_ptr<FrameCacheAble> Ptr;
-
-    FrameCacheAble(const Frame::Ptr &frame){
-        if(frame->cacheAble()){
-            _frame = frame;
-            _ptr = frame->data();
-        }else{
-            _buffer = FrameImp::create();
-            _buffer->_buffer.assign(frame->data(),frame->size());
-            _ptr = _buffer->data();
-        }
-        _size = frame->size();
-        _dts = frame->dts();
-        _pts = frame->pts();
-        _prefix_size = frame->prefixSize();
-        _codec_id = frame->getCodecId();
-        _key = frame->keyFrame();
-        _config = frame->configFrame();
-    }
-
-    ~FrameCacheAble() override = default;
-
-    /**
-     * 可以被缓存
-     */
-    bool cacheAble() const override {
-        return true;
-    }
-
-    bool keyFrame() const override{
-        return _key;
-    }
-
-    bool configFrame() const override{
-        return _config;
-    }
-
-private:
-    bool _key;
-    bool _config;
-    Frame::Ptr _frame;
-    FrameImp::Ptr _buffer;
-};
-
 Frame::Ptr Frame::getCacheAbleFrame(const Frame::Ptr &frame){
     if(frame->cacheAble()){
         return frame;
@@ -106,9 +31,16 @@ Frame::Ptr Frame::getCacheAbleFrame(const Frame::Ptr &frame){
     return std::make_shared<FrameCacheAble>(frame);
 }
 
+FrameStamp::FrameStamp(Frame::Ptr frame, Stamp &stamp, bool modify_stamp)
+{
+    _frame = std::move(frame);
+    //覆盖时间戳
+    stamp.revise(_frame->dts(), _frame->pts(), _dts, _pts, modify_stamp);
+}
+
 TrackType getTrackType(CodecId codecId) {
     switch (codecId) {
-#define XX(name, type, value, str) case name : return type;
+#define XX(name, type, value, str, mpeg_id) case name : return type;
         CODEC_MAP(XX)
 #undef XX
         default : return TrackInvalid;
@@ -117,14 +49,14 @@ TrackType getTrackType(CodecId codecId) {
 
 const char *getCodecName(CodecId codec) {
     switch (codec) {
-#define XX(name, type, value, str) case name : return str;
+#define XX(name, type, value, str, mpeg_id) case name : return str;
         CODEC_MAP(XX)
 #undef XX
         default : return "invalid";
     }
 }
 
-#define XX(name, type, value, str) {str, name},
+#define XX(name, type, value, str, mpeg_id) {str, name},
 static map<string, CodecId, StrCaseCompare> codec_map = {CODEC_MAP(XX)};
 #undef XX
 
@@ -153,19 +85,23 @@ const char* getTrackString(TrackType type){
     }
 }
 
-const char *CodecInfo::getCodecName() {
+const char *CodecInfo::getCodecName() const {
     return mediakit::getCodecName(getCodecId());
 }
 
-TrackType CodecInfo::getTrackType() {
+TrackType CodecInfo::getTrackType() const {
     return mediakit::getTrackType(getCodecId());
 }
 
 static size_t constexpr kMaxFrameCacheSize = 100;
 
 bool FrameMerger::willFlush(const Frame::Ptr &frame) const{
-    if (_frameCached.empty()) {
+    if (_frame_cache.empty()) {
+        //缓存为空
         return false;
+    }
+    if (!frame) {
+        return true;
     }
     switch (_type) {
         case none : {
@@ -180,42 +116,21 @@ bool FrameMerger::willFlush(const Frame::Ptr &frame) const{
                 }
                 default: break;
             }
-            return new_frame || _frameCached.back()->dts() != frame->dts() || _frameCached.size() > kMaxFrameCacheSize;
+            //遇到新帧、或时间戳变化或缓存太多，防止内存溢出，则flush输出
+            return new_frame || _frame_cache.back()->dts() != frame->dts() || _frame_cache.size() > kMaxFrameCacheSize;
         }
 
         case mp4_nal_size:
         case h264_prefix: {
-            if (_frameCached.back()->dts() != frame->dts()) {
-                //时间戳变化了
+            if (!_have_decode_able_frame) {
+                //缓存中没有有效的能解码的帧，所以这次不flush
+                return _frame_cache.size() > kMaxFrameCacheSize;
+            }
+            if (_frame_cache.back()->dts() != frame->dts() || frame->decodeAble() || frame->configFrame()) {
+                //时间戳变化了,或新的一帧，或遇到config帧，立即flush
                 return true;
             }
-            switch (frame->getCodecId()) {
-                case CodecH264 : {
-                    auto type = H264_TYPE(frame->data()[frame->prefixSize()]);
-                    if ((frame->data()[frame->prefixSize() + 1] & 0x80) != 0 && type >= H264Frame::NAL_B_P &&
-                        type <= H264Frame::NAL_IDR) {// sei aud pps sps 不判断
-                        //264 新一帧的开始，刷新输出
-                        return true;
-                    } else {
-                        // 不刷新输出
-                        return false;
-                    }
-                    break;
-                }
-                case CodecH265 : {
-                    auto type = H265_TYPE(frame->data()[frame->prefixSize()]);
-                    if ((type >= H265Frame::NAL_TRAIL_R && type <= H265Frame::NAL_RSV_IRAP_VCL23) &&
-                        ((frame->data()[frame->prefixSize() + 2] >> 7 & 0x01) != 0)) {
-                        //first_slice_segment_in_pic_flag is frame start  
-                        return true;
-                    } else {
-                        return false;
-                    }
-                    break;
-                }
-                default : break;
-            }
-            return _frameCached.size() > kMaxFrameCacheSize;
+            return _frame_cache.size() > kMaxFrameCacheSize;
         }
         default: /*不可达*/ assert(0); return true;
     }
@@ -224,6 +139,8 @@ bool FrameMerger::willFlush(const Frame::Ptr &frame) const{
 void FrameMerger::doMerge(BufferLikeString &merged, const Frame::Ptr &frame) const{
     switch (_type) {
         case none : {
+            //此处是合并ps解析输出的流，解析出的流可能是半帧或多帧，不能简单的根据nal type过滤
+            //此流程只用于合并ps解析输出为H264/H265，后面流程有split和忽略无效帧操作
             merged.append(frame->data(), frame->size());
             break;
         }
@@ -247,90 +164,44 @@ void FrameMerger::doMerge(BufferLikeString &merged, const Frame::Ptr &frame) con
     }
 }
 
-bool FrameMerger::shouldDrop(const Frame::Ptr &frame) const{
-    switch (frame->getCodecId()) {
-        case CodecH264: {
-            auto type = H264_TYPE(frame->data()[frame->prefixSize()]);
-            if (type == H264Frame::NAL_SEI || type == H264Frame::NAL_AUD) {
-                // 防止吧AUD或者SEI当成一帧
-                return true;
-            }
-            break;
-        }
-        case CodecH265: {
-            //如果是新的一帧，前面的缓存需要输出
-            auto type = H265_TYPE(frame->data()[frame->prefixSize()]);
-            if (type == H265Frame::NAL_AUD || type == H265Frame::NAL_SEI_PREFIX || type == H265Frame::NAL_SEI_SUFFIX) {
-                // 防止吧AUD或者SEI当成一帧
-                return true;
-            }
-            break;
-        }
-        default:
-            break;
-    }
-    return false;
-}
-
-bool FrameMerger::frameCacheHasVCL(List<Frame::Ptr> &frameCached) const {
-    bool hasVCL = false;
-    bool isH264OrH265 = false;
-    frameCached.for_each([&hasVCL, &isH264OrH265](const Frame::Ptr &frame) {
-        switch (frame->getCodecId()) {
-            case CodecH264: {
-                auto type = H264_TYPE(frame->data()[frame->prefixSize()]);
-                if (type >= H264Frame::NAL_B_P && type <= H264Frame::NAL_IDR) {
-                    //有编码数据
-                    hasVCL = true;
-                }
-                isH264OrH265 = true;
-                break;
-            }
-            case CodecH265: {
-                //如果是新的一帧，前面的缓存需要输出
-                auto type = H265_TYPE(frame->data()[frame->prefixSize()]);
-                if (type >= H265Frame::NAL_TRAIL_R && type <= H265Frame::NAL_RSV_IRAP_VCL23) {
-                    //有编码数据
-                    hasVCL = true;
-                }
-                isH264OrH265 = true;
-                break;
-            }
-            default:
-                break;
-        }
-    });
-    if (isH264OrH265) {
-        return hasVCL;
-    }
-    return true;
-}
-
-void FrameMerger::inputFrame(const Frame::Ptr &frame, const onOutput &cb) {
-    if (shouldDrop(frame)) {
-        return;
-    }
-    if (willFlush(frame) && frameCacheHasVCL(_frameCached)) {
-        Frame::Ptr back = _frameCached.back();
+bool FrameMerger::inputFrame(const Frame::Ptr &frame, onOutput cb, BufferLikeString *buffer) {
+    if (willFlush(frame)) {
+        Frame::Ptr back = _frame_cache.back();
         Buffer::Ptr merged_frame = back;
-        bool have_idr = back->keyFrame();
+        bool have_key_frame = back->keyFrame();
 
-        if (_frameCached.size() != 1 || _type == mp4_nal_size) {
+        if (_frame_cache.size() != 1 || _type == mp4_nal_size || buffer) {
             //在MP4模式下，一帧数据也需要在前添加nalu_size
-            BufferLikeString merged;
-            merged.reserve(back->size() + 1024);
-            _frameCached.for_each([&](const Frame::Ptr &frame) {
+            BufferLikeString tmp;
+            BufferLikeString &merged = buffer ? *buffer : tmp;
+
+            if (!buffer) {
+                tmp.reserve(back->size() + 1024);
+            }
+
+            _frame_cache.for_each([&](const Frame::Ptr &frame) {
                 doMerge(merged, frame);
                 if (frame->keyFrame()) {
-                    have_idr = true;
+                    have_key_frame = true;
                 }
             });
-            merged_frame = std::make_shared<BufferOffset<BufferLikeString> >(std::move(merged));
+            merged_frame = std::make_shared<BufferOffset<BufferLikeString> >(buffer ? merged : std::move(merged));
         }
-        cb(back->dts(), back->pts(), merged_frame, have_idr);
-        _frameCached.clear();
+        cb(back->dts(), back->pts(), merged_frame, have_key_frame);
+        _frame_cache.clear();
+        _have_decode_able_frame = false;
     }
-    _frameCached.emplace_back(Frame::getCacheAbleFrame(frame));
+
+    if (!frame) {
+        return false;
+    }
+
+    if (frame->decodeAble()) {
+        _have_decode_able_frame = true;
+    }
+    _cb = std::move(cb);
+    _frame_cache.emplace_back(Frame::getCacheAbleFrame(frame));
+    return true;
 }
 
 FrameMerger::FrameMerger(int type) {
@@ -338,7 +209,42 @@ FrameMerger::FrameMerger(int type) {
 }
 
 void FrameMerger::clear() {
-    _frameCached.clear();
+    _frame_cache.clear();
+    _have_decode_able_frame = false;
+}
+
+void FrameMerger::flush() {
+    if (_cb) {
+        inputFrame(nullptr, std::move(_cb), nullptr);
+    }
+    clear();
+}
+/**
+ * 写帧接口转function，辅助类
+ */
+class FrameWriterInterfaceHelper : public FrameWriterInterface {
+public:
+    using Ptr = std::shared_ptr<FrameWriterInterfaceHelper>;
+    using onWriteFrame = std::function<bool(const Frame::Ptr &frame)>;
+
+    /**
+     * inputFrame后触发onWriteFrame回调
+     */
+    FrameWriterInterfaceHelper(onWriteFrame cb) { _callback = std::move(cb); }
+
+    virtual ~FrameWriterInterfaceHelper() = default;
+
+    /**
+     * 写入帧数据
+     */
+    bool inputFrame(const Frame::Ptr &frame) override { return _callback(frame); }
+
+private:
+    onWriteFrame _callback;
+};
+
+FrameWriterInterface* FrameDispatcher::addDelegate(std::function<bool(const Frame::Ptr &frame)> cb) {
+    return addDelegate(std::make_shared<FrameWriterInterfaceHelper>(std::move(cb)));
 }
 
 }//namespace mediakit

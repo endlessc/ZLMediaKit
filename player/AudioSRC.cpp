@@ -1,4 +1,4 @@
-/*
+﻿/*
  * Copyright (c) 2016 The ZLMediaKit project authors. All Rights Reserved.
  *
  * This file is part of ZLMediaKit(https://github.com/ZLMediaKit/ZLMediaKit).
@@ -30,12 +30,12 @@ void AudioSRC::setOutputAudioConfig(const SDL_AudioSpec &cfg) {
     }
     InfoL << "audio cvt origin format, freq:" << freq << ", format:" << hex << format  << dec << ", channels:" << channels;
     InfoL << "audio cvt info, "
-          << "needed:" << _audio_cvt.needed
-          << ", src_format:" << hex << _audio_cvt.src_format
-          << ", dst_format:" << _audio_cvt.dst_format << dec
-          << ", rate_incr:" << _audio_cvt.rate_incr
-          << ", len_mult:" << _audio_cvt.len_mult
-          << ", len_ratio:" << _audio_cvt.len_ratio;
+          << "needed:" << (int)_audio_cvt.needed
+          << ", src_format:" << hex << (SDL_AudioFormat)_audio_cvt.src_format
+          << ", dst_format:" << (SDL_AudioFormat)_audio_cvt.dst_format << dec
+          << ", rate_incr:" << (double)_audio_cvt.rate_incr
+          << ", len_mult:" << (int)_audio_cvt.len_mult
+          << ", len_ratio:" << (double)_audio_cvt.len_ratio;
 }
 
 void AudioSRC::setEnableMix(bool flag) {
@@ -51,31 +51,39 @@ int AudioSRC::getPCMData(char *buf, int size) {
         return _delegate->getPCMData(buf, size);
     }
 
-    if ((int)(size / _audio_cvt.len_ratio) != _origin_size) {
-        _origin_size = size / _audio_cvt.len_ratio;
-        _origin_buf.reset(new char[(std::max)(_origin_size, size)], [](char *ptr) {
-            delete[] ptr;
-        });
-        InfoL << "origin pcm buffer size is:" << _origin_size << ", target pcm buffer size is:" << size;
+    //对应的未转换前pcm的长度
+    auto original_size = (int) (size / _audio_cvt.len_ratio);
+    if (original_size % 4 != 0) {
+        //必须为4byte的整数(双通道16bit一个采样就4个字节)
+        original_size = 4 * (original_size / 4) + 4;
     }
 
-    auto origin_size = _delegate->getPCMData(_origin_buf.get(), _origin_size);
+    //需要准备这么长的buf用于重采样
+    if ((int) (original_size * _audio_cvt.len_mult) != _buf_size) {
+        _buf_size = original_size * _audio_cvt.len_mult;
+        _buf.reset(new char[_buf_size], [](char *ptr) {
+            delete[] ptr;
+        });
+        InfoL << "origin pcm buffer size is:" << original_size << ", target pcm buffer size is:" << size;
+    }
+
+    auto origin_size = _delegate->getPCMData(_buf.get(), original_size );
     if (!origin_size) {
         //获取数据失败
         TraceL << "get empty pcm data";
         return 0;
     }
 
-    _audio_cvt.buf = (Uint8 *) _origin_buf.get();
+    _audio_cvt.buf = (Uint8 *) _buf.get();
     _audio_cvt.len = origin_size;
     if (0 != SDL_ConvertAudio(&_audio_cvt)) {
         WarnL << "SDL_ConvertAudio failed!";
         _audio_cvt.len_cvt = 0;
     }
     if (_audio_cvt.len_cvt) {
-        _target_buf.append(_origin_buf.get(), _audio_cvt.len_cvt);
+        _target_buf.append(_buf.get(), _audio_cvt.len_cvt);
     }
-    if (_target_buf.size() < size) {
+    if (_target_buf.size() < (size_t)size) {
         return 0;
     }
     memcpy(buf, _target_buf.data(), size);
@@ -114,7 +122,7 @@ int AudioPlayer::getPCMChannel() {
 
 int AudioPlayer::getPCMData(char *buf, int size) {
     lock_guard<mutex> lck(_mtx);
-    if (_buffer.size() < size) {
+    if (_buffer.size() < (size_t)size) {
         return 0;
     }
     memcpy(buf, _buffer.data(), size);

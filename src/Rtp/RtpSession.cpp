@@ -12,54 +12,55 @@
 #include "RtpSession.h"
 #include "RtpSelector.h"
 #include "Network/TcpServer.h"
+#include "Rtsp/Rtsp.h"
 #include "Rtsp/RtpReceiver.h"
+#include "Common/config.h"
+
+using namespace std;
+using namespace toolkit;
+
 namespace mediakit{
 
 const string RtpSession::kStreamID = "stream_id";
-const string RtpSession::kIsUDP = "is_udp";
+const string RtpSession::kSSRC = "ssrc";
+const string RtpSession::kOnlyAudio = "only_audio";
 
 void RtpSession::attachServer(const Server &server) {
-    _stream_id = const_cast<Server &>(server)[kStreamID];
-    _is_udp = const_cast<Server &>(server)[kIsUDP];
+    setParams(const_cast<Server &>(server));
+}
 
-    if (_is_udp) {
-        //设置udp socket读缓存
-        SockUtil::setRecvBuf(getSock()->rawFD(), 4 * 1024 * 1024);
-        _statistic_udp = std::make_shared<ObjectStatistic<UdpSession> >();
-    } else {
-        _statistic_tcp = std::make_shared<ObjectStatistic<TcpSession> >();
-    }
+void RtpSession::setParams(mINI &ini) {
+    _stream_id = ini[kStreamID];
+    _ssrc = ini[kSSRC];
+    _only_audio = ini[kOnlyAudio];
 }
 
 RtpSession::RtpSession(const Socket::Ptr &sock) : Session(sock) {
-    DebugP(this);
     socklen_t addr_len = sizeof(_addr);
-    getpeername(sock->rawFD(), &_addr, &addr_len);
+    getpeername(sock->rawFD(), (struct sockaddr *)&_addr, &addr_len);
+    _is_udp = sock->sockType() == SockNum::Sock_UDP;
+    if (_is_udp) {
+        // 设置udp socket读缓存
+        SockUtil::setRecvBuf(getSock()->rawFD(), 4 * 1024 * 1024);
+    }
 }
 
 RtpSession::~RtpSession() {
-    DebugP(this);
     if(_process){
         RtpSelector::Instance().delProcess(_stream_id,_process.get());
     }
 }
 
 void RtpSession::onRecv(const Buffer::Ptr &data) {
-    try {
-        if (_is_udp) {
-            onRtpPacket(data->data(), data->size());
-            return;
-        }
-        RtpSplitter::input(data->data(), data->size());
-    } catch (SockException &ex) {
-        shutdown(ex);
-    } catch (std::exception &ex) {
-        shutdown(SockException(Err_other, ex.what()));
+    if (_is_udp) {
+        onRtpPacket(data->data(), data->size());
+        return;
     }
+    RtpSplitter::input(data->data(), data->size());
 }
 
 void RtpSession::onError(const SockException &err) {
-    WarnL << _stream_id << " " << err.what();
+    WarnP(this) << _stream_id << " " << err;
 }
 
 void RtpSession::onManager() {
@@ -73,6 +74,15 @@ void RtpSession::onManager() {
 }
 
 void RtpSession::onRtpPacket(const char *data, size_t len) {
+    if (_delay_close) {
+        // 正在延时关闭中，忽略所有数据
+        return;
+    }
+    if (!isRtp(data, len)) {
+        // 忽略非rtp数据
+        WarnP(this) << "Not rtp packet";
+        return;
+    }
     if (!_is_udp) {
         if (_search_rtp) {
             //搜索上下文期间，数据丢弃
@@ -83,26 +93,45 @@ void RtpSession::onRtpPacket(const char *data, size_t len) {
             }
             return;
         }
-        if (len > 1024 * 10) {
+        GET_CONFIG(uint32_t, rtpMaxSize, Rtp::kRtpMaxSize);
+        if (len > 1024 * rtpMaxSize) {
             _search_rtp = true;
             WarnL << "rtp包长度异常(" << len << ")，发送端可能缓存溢出并覆盖，开始搜索ssrc以便恢复上下文";
             return;
         }
     }
     if (!_process) {
-        if (!RtpSelector::getSSRC(data, len, _ssrc)) {
+        //未设置ssrc时，尝试获取ssrc
+        if (!_ssrc && !RtpSelector::getSSRC(data, len, _ssrc)) {
             return;
         }
         if (_stream_id.empty()) {
             //未指定流id就使用ssrc为流id
             _stream_id = printSSRC(_ssrc);
         }
-        //tcp情况下，一个tcp链接只可能是一路流，不需要通过多个ssrc来区分，所以不需要频繁getProcess
-        _process = RtpSelector::Instance().getProcess(_stream_id, true);
-        _process->setListener(dynamic_pointer_cast<RtpSession>(shared_from_this()));
+        try {
+            _process = RtpSelector::Instance().getProcess(_stream_id, true);
+        } catch (RtpSelector::ProcessExisted &ex) {
+            if (!_is_udp) {
+                // tcp情况下立即断开连接
+                throw;
+            }
+            // udp情况下延时断开连接(等待超时自动关闭)，防止频繁创建销毁RtpSession对象
+            WarnP(this) << ex.what();
+            _delay_close = true;
+            return;
+        }
+        _process->setOnlyAudio(_only_audio);
+        _process->setDelegate(dynamic_pointer_cast<RtpSession>(shared_from_this()));
     }
     try {
-        _process->inputRtp(false, getSock(), data, len, &_addr);
+        uint32_t rtp_ssrc = 0;
+        RtpSelector::getSSRC(data, len, rtp_ssrc);
+        if (rtp_ssrc != _ssrc) {
+            WarnP(this) << "ssrc mismatched, rtp dropped: " << rtp_ssrc << " != " << _ssrc;
+            return;
+        }
+        _process->inputRtp(false, getSock(), data, len, (struct sockaddr *)&_addr);
     } catch (RtpTrack::BadRtpException &ex) {
         if (!_is_udp) {
             WarnL << ex.what() << "，开始搜索ssrc以便恢复上下文";
@@ -116,19 +145,11 @@ void RtpSession::onRtpPacket(const char *data, size_t len) {
     _ticker.resetTime();
 }
 
-bool RtpSession::close(MediaSource &sender, bool force) {
+bool RtpSession::close(MediaSource &sender) {
     //此回调在其他线程触发
-    if(!_process || (!force && _process->getTotalReaderCount())){
-        return false;
-    }
-    string err = StrPrinter << "close media:" << sender.getSchema() << "/" << sender.getVhost() << "/" << sender.getApp() << "/" << sender.getId() << " " << force;
-    safeShutdown(SockException(Err_shutdown,err));
+    string err = StrPrinter << "close media: " << sender.getUrl();
+    safeShutdown(SockException(Err_shutdown, err));
     return true;
-}
-
-int RtpSession::totalReaderCount(MediaSource &sender) {
-    //此回调在其他线程触发
-    return _process ? _process->getTotalReaderCount() : sender.totalReaderCount();
 }
 
 static const char *findSSRC(const char *data, ssize_t len, uint32_t ssrc) {
@@ -176,6 +197,10 @@ const char *RtpSession::onSearchPacketTail(const char *data, size_t len) {
     if (ssrc_offset == rtp_len + 2 || ssrc_offset == rtp_len + 4) {
         InfoL << "rtp搜索成功，tcp上下文恢复成功，丢弃的rtp残余数据为：" << rtp_len_ptr - data;
         _search_rtp_finished = true;
+        if (rtp_len_ptr == data) {
+            //停止搜索rtp，否则会进入死循环
+            _search_rtp = false;
+        }
         //前面的数据都需要丢弃，这个是rtp的起始
         return rtp_len_ptr;
     }

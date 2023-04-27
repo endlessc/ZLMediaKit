@@ -12,11 +12,9 @@
 #define ZLMEDIAKIT_H265RTPCODEC_H
 
 #include "Rtsp/RtpCodec.h"
-#include "Util/ResourcePool.h"
 #include "Extension/H265.h"
+// for DtsGenerator
 #include "Common/Stamp.h"
-
-using namespace toolkit;
 
 namespace mediakit{
 
@@ -27,7 +25,7 @@ namespace mediakit{
  */
 class H265RtpDecoder : public RtpCodec {
 public:
-    typedef std::shared_ptr<H265RtpDecoder> Ptr;
+    using Ptr = std::shared_ptr<H265RtpDecoder>;
 
     H265RtpDecoder();
     ~H265RtpDecoder() {}
@@ -44,15 +42,18 @@ public:
     }
 
 private:
-    bool unpackAp(const uint8_t *ptr, ssize_t size, uint32_t stamp);
-    bool mergeFu(const uint8_t *ptr, ssize_t size, uint16_t seq, uint32_t stamp);
-    bool singleFrame(const uint8_t *ptr, ssize_t size, uint32_t stamp);
+    bool unpackAp(const RtpPacket::Ptr &rtp, const uint8_t *ptr, ssize_t size, uint64_t stamp);
+    bool mergeFu(const RtpPacket::Ptr &rtp, const uint8_t *ptr, ssize_t size, uint64_t stamp, uint16_t seq);
+    bool singleFrame(const RtpPacket::Ptr &rtp, const uint8_t *ptr, ssize_t size, uint64_t stamp);
 
+    bool decodeRtp(const RtpPacket::Ptr &rtp);
     H265Frame::Ptr obtainFrame();
-    void outputFrame(const H265Frame::Ptr &frame);
+    void outputFrame(const RtpPacket::Ptr &rtp, const H265Frame::Ptr &frame);
 
 private:
     bool _using_donl_field = false;
+    bool _gop_dropped = false;
+    bool _fu_dropped = true;
     uint16_t _last_seq = 0;
     H265Frame::Ptr _frame;
     DtsGenerator _dts_generator;
@@ -63,7 +64,7 @@ private:
  */
 class H265RtpEncoder : public H265RtpDecoder ,public RtpInfo{
 public:
-    typedef std::shared_ptr<H265RtpEncoder> Ptr;
+    using Ptr = std::shared_ptr<H265RtpEncoder>;
 
     /**
      * @param ui32Ssrc ssrc
@@ -83,9 +84,23 @@ public:
      * 输入265帧
      * @param frame 帧数据，必须
      */
-    void inputFrame(const Frame::Ptr &frame) override;
+    bool inputFrame(const Frame::Ptr &frame) override;
+
+    /**
+     * 刷新输出所有frame缓存
+     */
+    void flush() override;
+
 private:
-    void makeH265Rtp(int nal_type,const void *pData, size_t uiLen, bool bMark, bool first_packet,uint32_t uiStamp);
+    void packRtp(const char *ptr, size_t len, uint64_t pts, bool is_mark, bool gop_pos);
+    void packRtpFu(const char *ptr, size_t len, uint64_t pts, bool is_mark, bool gop_pos);
+    void insertConfigFrame(uint64_t pts);
+    bool inputFrame_l(const Frame::Ptr &frame, bool is_mark);
+private:
+    Frame::Ptr _sps;
+    Frame::Ptr _pps;
+    Frame::Ptr _vps;
+    Frame::Ptr _last_frame;
 };
 
 }//namespace mediakit{

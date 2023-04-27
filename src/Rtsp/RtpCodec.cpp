@@ -12,7 +12,7 @@
 
 namespace mediakit{
 
-RtpPacket::Ptr RtpInfo::makeRtp(TrackType type, const void* data, size_t len, bool mark, uint32_t stamp) {
+RtpPacket::Ptr RtpInfo::makeRtp(TrackType type, const void* data, size_t len, bool mark, uint64_t stamp) {
     uint16_t payload_len = (uint16_t) (len + RtpPacket::kRtpHeaderSize);
     auto rtp = RtpPacket::create();
     rtp->setCapacity(payload_len + RtpPacket::kRtpTcpHeaderSize);
@@ -35,7 +35,8 @@ RtpPacket::Ptr RtpInfo::makeRtp(TrackType type, const void* data, size_t len, bo
     header->csrc = 0;
     header->mark = mark;
     header->pt = _pt;
-    header->seq = htons(_seq++);
+    header->seq = htons(_seq);
+    ++_seq;
     header->stamp = htonl(uint64_t(stamp) * _sample_rate / 1000);
     header->ssrc = htonl(_ssrc);
 

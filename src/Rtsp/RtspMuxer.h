@@ -13,28 +13,47 @@
 
 #include "Extension/Frame.h"
 #include "Common/MediaSink.h"
+#include "Common/Stamp.h"
 #include "RtpCodec.h"
 
 namespace mediakit{
+
+class RingDelegateHelper : public toolkit::RingDelegate<RtpPacket::Ptr> {
+public:
+    using onRtp = std::function<void(RtpPacket::Ptr in, bool is_key)> ;
+
+    ~RingDelegateHelper() override = default;
+
+    RingDelegateHelper(onRtp on_rtp) {
+        _on_rtp = std::move(on_rtp);
+    }
+
+    void onWrite(RtpPacket::Ptr in, bool is_key) override {
+        _on_rtp(std::move(in), is_key);
+    }
+
+private:
+    onRtp _on_rtp;
+};
+
 /**
 * rtsp生成器
 */
-class RtspMuxer : public MediaSinkInterface{
+class RtspMuxer : public MediaSinkInterface {
 public:
-    typedef std::shared_ptr<RtspMuxer> Ptr;
+    using Ptr = std::shared_ptr<RtspMuxer>;
 
     /**
      * 构造函数
      */
     RtspMuxer(const TitleSdp::Ptr &title = nullptr);
-
-    virtual ~RtspMuxer(){}
+    ~RtspMuxer() override = default;
 
     /**
      * 获取完整的SDP字符串
      * @return SDP字符串
      */
-    string getSdp() ;
+    std::string getSdp() ;
 
     /**
      * 获取rtp环形缓存
@@ -45,22 +64,38 @@ public:
     /**
      * 添加ready状态的track
      */
-    void addTrack(const Track::Ptr & track) override;
+    bool addTrack(const Track::Ptr & track) override;
 
     /**
      * 写入帧数据
      * @param frame 帧
      */
-    void inputFrame(const Frame::Ptr &frame) override;
+    bool inputFrame(const Frame::Ptr &frame) override;
+
+    /**
+     * 刷新输出所有frame缓存
+     */
+    void flush() override;
 
     /**
      * 重置所有track
      */
     void resetTracks() override ;
+
 private:
-    string _sdp;
+    void onRtp(RtpPacket::Ptr in, bool is_key);
+    void trySyncTrack();
+
+private:
+    bool _live = true;
+    uint32_t _rtp_stamp[TrackMax]{0};
+    uint64_t _ntp_stamp[TrackMax]{0};
+    uint64_t _ntp_stamp_start;
+    std::string _sdp;
+    Stamp _stamp[TrackMax];
     RtpCodec::Ptr _encoder[TrackMax];
     RtpRing::RingType::Ptr _rtpRing;
+    RtpRing::RingType::Ptr _rtpInterceptor;
 };
 
 

@@ -14,6 +14,7 @@
 #include "Util/MD5.h"
 #include "Util/logger.h"
 #include "Http/WebSocketClient.h"
+
 using namespace std;
 using namespace toolkit;
 using namespace mediakit;
@@ -32,7 +33,7 @@ protected:
     }
     //被动断开连接回调
     void onErr(const SockException &ex) override {
-        WarnL << ex.what();
+        WarnL << ex;
     }
     //tcp连接成功后每2秒触发一次该事件
     void onManager() override {
@@ -41,7 +42,7 @@ protected:
     }
     //连接服务器结果回调
     void onConnect(const SockException &ex) override{
-        DebugL << ex.what();
+        DebugL << ex;
     }
 
     //数据全部发送完毕后回调

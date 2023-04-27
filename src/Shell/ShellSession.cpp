@@ -14,6 +14,8 @@
 #include "Util/NoticeCenter.h"
 #include "Common/config.h"
 #include "ShellCMD.h"
+
+using namespace std;
 using namespace toolkit;
 
 namespace mediakit {
@@ -22,14 +24,11 @@ static onceToken s_token([]() {
     REGIST_CMD(media);
 }, nullptr);
 
-ShellSession::ShellSession(const Socket::Ptr &_sock) : TcpSession(_sock) {
-    DebugP(this);
+ShellSession::ShellSession(const Socket::Ptr &_sock) : Session(_sock) {
     pleaseInputUser();
 }
 
-ShellSession::~ShellSession() {
-    DebugP(this);
-}
+ShellSession::~ShellSession() = default;
 
 void ShellSession::onRecv(const Buffer::Ptr&buf) {
     //DebugL << hexdump(buf->data(), buf->size());
@@ -58,7 +57,7 @@ void ShellSession::onRecv(const Buffer::Ptr&buf) {
 }
 
 void ShellSession::onError(const SockException &err){
-    WarnP(this) << err.what();
+    WarnP(this) << err;
 }
 
 void ShellSession::onManager() {
@@ -91,7 +90,7 @@ inline bool ShellSession::onCommandLine(const string& line) {
 
 inline void ShellSession::pleaseInputUser() {
     SockSender::send("\033[0m");
-    SockSender::send(StrPrinter << SERVER_NAME << " login: " << endl);
+    SockSender::send(StrPrinter << kServerName << " login: " << endl);
     _loginInterceptor = [this](const string &user_name) {
         _strUserName=user_name;
         pleaseInputPasswd();
@@ -108,14 +107,14 @@ inline void ShellSession::pleaseInputPasswd() {
                                  << "\033[0mAuth failed("
                                  << errMessage
                                  << "), please try again.\r\n"
-                                 << _strUserName << "@" << SERVER_NAME
+                                 << _strUserName << "@" << kServerName
                                  << "'s password: \033[8m"
                                  << endl);
                 return;
             }
             SockSender::send("\033[0m");
             SockSender::send("-----------------------------------------\r\n");
-            SockSender::send(StrPrinter<<"欢迎来到"<<SERVER_NAME<<", 你可输入\"help\"查看帮助.\r\n"<<endl);
+            SockSender::send(StrPrinter<<"欢迎来到"<<kServerName<<", 你可输入\"help\"查看帮助.\r\n"<<endl);
             SockSender::send("-----------------------------------------\r\n");
             printShellPrefix();
             _loginInterceptor=nullptr;
@@ -146,7 +145,7 @@ inline void ShellSession::pleaseInputPasswd() {
 }
 
 inline void ShellSession::printShellPrefix() {
-    SockSender::send(StrPrinter << _strUserName << "@" << SERVER_NAME << "# " << endl);
+    SockSender::send(StrPrinter << _strUserName << "@" << kServerName << "# " << endl);
 }
 
 }/* namespace mediakit */

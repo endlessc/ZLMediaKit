@@ -252,9 +252,9 @@ static inline int getBitsLeft(void *pvHandle)
 *functions
 ********************************************/
 /**
- *  @brief Function getOneBit()   ¶Á1¸öbit
+ *  @brief Function getOneBit()   get next bit
  *  @param[in]     h     T_GetBitContext structrue
- *  @retval        0: success, -1 : failure
+ *  @retval        other : success, -1 : failure
  *  @pre
  *  @post
  */
@@ -291,10 +291,10 @@ exit:
 
 
 /**
- *  @brief Function getBits()  ¶Án¸öbits£¬n²»ÄÜ³¬¹ý32
+ *  @brief Function getBits()  get next bits
  *  @param[in]     h     T_GetBitContext structrue
  *  @param[in]     n     how many bits you want?
- *  @retval        0: success, -1 : failure
+ *  @retval       other : success, -1 : failure
  *  @pre
  *  @post
  */
@@ -446,7 +446,7 @@ static inline unsigned int showBitsLong(void *pvHandle, int iN)
 
 
 /**
- *  @brief Function parseCodenum() Ö¸Êý¸çÂ×²¼±àÂë½âÎö£¬²Î¿¼h264±ê×¼µÚ9½Ú
+ *  @brief Function parseCodenum() 
  *  @param[in]     buf
  *  @retval        u32CodeNum
  *  @pre
@@ -469,7 +469,7 @@ static int parseCodenum(void *pvBuf)
 }
 
 /**
- *  @brief Function parseUe() Ö¸Êý¸çÂ×²¼±àÂë½âÎö ue(),²Î¿¼h264±ê×¼µÚ9½Ú
+ *  @brief Function parseUe() 
  *  @param[in]     buf       sps_pps parse buf
  *  @retval        u32CodeNum
  *  @pre
@@ -482,7 +482,7 @@ static int parseUe(void *pvBuf)
 
 
 /**
- *  @brief Function parseSe() Ö¸Êý¸çÂ×²¼±àÂë½âÎö se(), ²Î¿¼h264±ê×¼µÚ9½Ú
+ *  @brief Function parseSe() 
  *  @param[in]     buf       sps_pps parse buf
  *  @retval        u32CodeNum
  *  @pre
@@ -502,7 +502,7 @@ static int parseSe(void *pvBuf)
 
 
 /**
- *  @brief Function getBitContextFree()  ÉêÇëµÄget_bit_context½á¹¹ÄÚ´æÊÍ·Å
+ *  @brief Function getBitContextFree()  
  *  @param[in]     buf       T_GetBitContext buf
  *  @retval        none
  *  @pre
@@ -527,18 +527,13 @@ static void getBitContextFree(void *pvBuf)
 
 
 /**
- *  @brief Function deEmulationPrevention()  ½â¾ºÕù´úÂë
+ *  @brief Function deEmulationPrevention()  
  *  @param[in]     buf       T_GetBitContext buf
  *  @retval        none
  *  @pre
  *  @post
  *  @note:
- *      µ÷ÊÔÊ±×ÜÊÇ·¢ÏÖvui.time_scaleÖµÌØ±ðÆæ¹Ö£¬×ÜÊÇ16777216£¬ºóÀ´²éÑ¯Ô­ÒòÈçÏÂ:
  *      http://www.cnblogs.com/eustoma/archive/2012/02/13/2415764.html
- *      H.264±àÂëÊ±£¬ÔÚÃ¿¸öNALÇ°Ìí¼ÓÆðÊ¼Âë 0x000001£¬½âÂëÆ÷ÔÚÂëÁ÷ÖÐ¼ì²âµ½ÆðÊ¼Âë£¬µ±Ç°NAL½áÊø¡£
- *      ÎªÁË·ÀÖ¹NALÄÚ²¿³öÏÖ0x000001µÄÊý¾Ý£¬h.264ÓÖÌá³ö'·ÀÖ¹¾ºÕù emulation prevention"»úÖÆ£¬
- *      ÔÚ±àÂëÍêÒ»¸öNALÊ±£¬Èç¹û¼ì²â³öÓÐÁ¬ÐøÁ½¸ö0x00×Ö½Ú£¬¾ÍÔÚºóÃæ²åÈëÒ»¸ö0x03¡£
- *      µ±½âÂëÆ÷ÔÚNALÄÚ²¿¼ì²âµ½0x000003µÄÊý¾Ý£¬¾Í°Ñ0x03Å×Æú£¬»Ö¸´Ô­Ê¼Êý¾Ý¡£
  *      0x000000  >>>>>>  0x00000300
  *      0x000001  >>>>>>  0x00000301
  *      0x000002  >>>>>>  0x00000302
@@ -581,22 +576,20 @@ static void *deEmulationPrevention(void *pvBuf)
     tmp_buf_size = ptPtr->iBufSize;
     for(i=0; i<(tmp_buf_size-2); i++)
     {
-        /*¼ì²â0x000003*/
+       
         iVal = (pu8TmpPtr[i]^0x00) + (pu8TmpPtr[i+1]^0x00) + (pu8TmpPtr[i+2]^0x03);
         if(iVal == 0)
         {
-            /*ÌÞ³ý0x03*/
+      
             for(j=i+2; j<tmp_buf_size-1; j++)
             {
                 pu8TmpPtr[j] = pu8TmpPtr[j+1];
             }
 
-            /*ÏàÓ¦µÄbufsizeÒª¼õÐ¡*/
+           
             ptPtr->iBufSize--;
         }
     }
-
-    /*ÖØÐÂ¼ÆËãtotal_bit*/
     ptPtr->iTotalBit = ptPtr->iBufSize << 3;
 
     return (void *)ptPtr;
@@ -712,7 +705,6 @@ static inline int decodeVuiParameters(void *pvBuf, T_SPS *ptSps)
 {
     int iAspectRatioInfoPresentFlag;
     unsigned int uiAspectRatioIdc;
-    int iChromaSampleLocation;
 
     iAspectRatioInfoPresentFlag = getOneBit(pvBuf);
 
@@ -759,8 +751,7 @@ static inline int decodeVuiParameters(void *pvBuf, T_SPS *ptSps)
     /* chroma_location_info_present_flag */
     if (getOneBit(pvBuf))
     {
-        /* chroma_sample_location_type_top_field */
-        iChromaSampleLocation = parseUe(pvBuf);
+        parseUe(pvBuf);  /* chroma_sample_location_type_top_field */
         parseUe(pvBuf);  /* chroma_sample_location_type_bottom_field */
     }
     if(getBitsLeft(pvBuf) < 10)
@@ -2196,21 +2187,14 @@ int h264GetFormat(T_SPS *ptSps)
 
 void h264GeFramerate(T_SPS *ptSps, float *pfFramerate)
 {
-    int iFrInt = 0;
+
     if(ptSps->iTimingInfoPresentFlag)
     {
-        if(!ptSps->iFixedFrameRateFlag)
-        {
-            *pfFramerate = (float)ptSps->u32TimeScale / (float)ptSps->u32NumUnitsInTick;
-            //iFrInt = ptSps->vui_parameters.u32TimeScale / ptSps->vui_parameters.u32NumUnitsInTick;
-        }else
-        {
-            *pfFramerate = (float)ptSps->u32TimeScale / (float)ptSps->u32NumUnitsInTick / 2.0;
-            //iFrInt = ptSps->vui_parameters.u32TimeScale / ptSps->vui_parameters.u32NumUnitsInTick / 2;
-        }
-        iFrInt = ptSps->u32TimeScale / ptSps->u32NumUnitsInTick / 2;
+        *pfFramerate = (float)ptSps->u32TimeScale / (float)ptSps->u32NumUnitsInTick / 2.0;
+    }else{
+        *pfFramerate = 0;    
     }
-    switch(iFrInt)
+    switch((int)*pfFramerate)
     {
         case 23:// 23.98
             RPT(RPT_DBG, "frame rate:23.98");

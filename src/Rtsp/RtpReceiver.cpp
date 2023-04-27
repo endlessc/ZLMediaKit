@@ -11,12 +11,10 @@
 #include "Common/config.h"
 #include "RtpReceiver.h"
 
-#define RTP_MAX_SIZE (10 * 1024)
-
 namespace mediakit {
 
 RtpTrack::RtpTrack() {
-    setOnSort([this](uint16_t seq, RtpPacket::Ptr &packet) {
+    setOnSort([this](uint16_t seq, RtpPacket::Ptr packet) {
         onRtpSorted(std::move(packet));
     });
 }
@@ -31,30 +29,37 @@ void RtpTrack::clear() {
     PacketSortor<RtpPacket::Ptr>::clear();
 }
 
-bool RtpTrack::inputRtp(TrackType type, int sample_rate, uint8_t *ptr, size_t len) {
+RtpPacket::Ptr RtpTrack::inputRtp(TrackType type, int sample_rate, uint8_t *ptr, size_t len) {
     if (len < RtpPacket::kRtpHeaderSize) {
-        WarnL << "rtp包太小:" << len;
-        return false;
+        throw BadRtpException("rtp size less than 12");
     }
-    if (len > RTP_MAX_SIZE) {
-        WarnL << "超大的rtp包:" << len << " > " << RTP_MAX_SIZE;
-        return false;
+    GET_CONFIG(uint32_t, rtpMaxSize, Rtp::kRtpMaxSize);
+    if (len > 1024 * rtpMaxSize) {
+        WarnL << "超大的rtp包:" << len << " > " << 1024 * rtpMaxSize;
+        return nullptr;
     }
     if (!sample_rate) {
         //无法把时间戳转换成毫秒
-        return false;
+        return nullptr;
     }
     RtpHeader *header = (RtpHeader *) ptr;
     if (header->version != RtpPacket::kRtpVersion) {
-        throw BadRtpException("非法的rtp，version字段非法");
+        throw BadRtpException("invalid rtp version");
     }
-    if (!header->getPayloadSize(len)) {
-        //无有效负载的rtp包
-        return false;
+    if (header->getPayloadSize(len) < 0) {
+        //rtp有效负载小于0，非法
+        throw BadRtpException("invalid rtp payload size");
     }
 
     //比对缓存ssrc
     auto ssrc = ntohl(header->ssrc);
+
+    if (_pt == 0xFF) {
+        _pt = header->pt;
+    } else if (header->pt != _pt) {
+        //TraceL << "rtp pt mismatch:" << (int) header->pt << " !=" << (int) _pt;
+        return nullptr;
+    }
 
     if (!_ssrc) {
         //记录并锁定ssrc
@@ -67,10 +72,10 @@ bool RtpTrack::inputRtp(TrackType type, int sample_rate, uint8_t *ptr, size_t le
         //ssrc错误
         if (_ssrc_alive.elapsedTime() < 3 * 1000) {
             //接受正确ssrc的rtp在10秒内，那么我们认为存在多路rtp,忽略掉ssrc不匹配的rtp
-            WarnL << "ssrc不匹配,rtp已丢弃:" << ssrc << " != " << _ssrc;
-            return false;
+            WarnL << "ssrc mismatch, rtp dropped:" << ssrc << " != " << _ssrc;
+            return nullptr;
         }
-        InfoL << "rtp流ssrc切换:" << _ssrc << " -> " << ssrc;
+        InfoL << "rtp ssrc changed:" << _ssrc << " -> " << ssrc;
         _ssrc = ssrc;
         _ssrc_alive.resetTime();
     }
@@ -90,11 +95,27 @@ bool RtpTrack::inputRtp(TrackType type, int sample_rate, uint8_t *ptr, size_t le
     data[3] = len & 0xFF;
     //拷贝rtp
     memcpy(&data[4], ptr, len);
-
+    if (_disable_ntp) {
+        //不支持ntp时间戳，例如国标推流，那么直接使用rtp时间戳
+        rtp->ntp_stamp = rtp->getStamp() * uint64_t(1000) / sample_rate;
+    } else {
+        //设置ntp时间戳
+        rtp->ntp_stamp = _ntp_stamp.getNtpStamp(rtp->getStamp(), sample_rate);
+    }
     onBeforeRtpSorted(rtp);
-    auto seq = rtp->getSeq();
-    sortPacket(seq, std::move(rtp));
-    return true;
+    sortPacket(rtp->getSeq(), rtp);
+    return rtp;
+}
+
+void RtpTrack::setNtpStamp(uint32_t rtp_stamp, uint64_t ntp_stamp_ms) {
+    _disable_ntp = rtp_stamp == 0 && ntp_stamp_ms == 0;
+    if (!_disable_ntp) {
+        _ntp_stamp.setNtpStamp(rtp_stamp, ntp_stamp_ms);
+    }
+}
+
+void RtpTrack::setPayloadType(uint8_t pt) {
+    _pt = pt;
 }
 
 ////////////////////////////////////////////////////////////////////////////////////

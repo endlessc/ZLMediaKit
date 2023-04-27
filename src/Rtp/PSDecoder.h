@@ -14,21 +14,26 @@
 #if defined(ENABLE_RTPPROXY)
 #include <stdint.h>
 #include "Decoder.h"
+#include "Http/HttpRequestSplitter.h"
+
 namespace mediakit{
 
 //ps解析器
-class PSDecoder : public Decoder {
+class PSDecoder : public Decoder, private HttpRequestSplitter {
 public:
     PSDecoder();
     ~PSDecoder();
+
     ssize_t input(const uint8_t* data, size_t bytes) override;
-    void setOnDecode(onDecode cb) override;
-    void setOnStream(onStream cb) override;
+
+    // HttpRequestSplitter interface
+private:
+    using HttpRequestSplitter::input;
+    const char *onSearchPacketTail(const char *data, size_t len) override;
+    ssize_t onRecvHeader(const char *, size_t) override { return 0; };
 
 private:
     void *_ps_demuxer = nullptr;
-    onDecode _on_decode;
-    onStream _on_stream;
 };
 
 }//namespace mediakit

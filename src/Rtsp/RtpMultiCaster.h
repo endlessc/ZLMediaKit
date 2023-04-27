@@ -15,54 +15,51 @@
 #include <memory>
 #include <unordered_set>
 #include <unordered_map>
-#include "Common/config.h"
 #include "RtspMediaSource.h"
-#include "Util/mini.h"
 #include "Network/Socket.h"
-using namespace std;
-using namespace toolkit;
 
 namespace mediakit{
 
 class MultiCastAddressMaker {
 public:
-    ~MultiCastAddressMaker() {}
+    ~MultiCastAddressMaker() = default;
     static MultiCastAddressMaker& Instance();
     static bool isMultiCastAddress(uint32_t addr);
-    static string toString(uint32_t addr);
+    static std::string toString(uint32_t addr);
 
     std::shared_ptr<uint32_t> obtain(uint32_t max_try = 10);
 
 private:
-    MultiCastAddressMaker() {};
+    MultiCastAddressMaker() = default;
     void release(uint32_t addr);
 
 private:
     uint32_t _addr = 0;
-    recursive_mutex _mtx;
-    unordered_set<uint32_t> _used_addr;
+    std::recursive_mutex _mtx;
+    std::unordered_set<uint32_t> _used_addr;
 };
 
 class RtpMultiCaster {
 public:
-    typedef std::shared_ptr<RtpMultiCaster> Ptr;
-    typedef function<void()> onDetach;
+    using Ptr = std::shared_ptr<RtpMultiCaster>;
+    using onDetach = std::function<void()>;
+
     ~RtpMultiCaster();
 
-    static Ptr get(SocketHelper &helper, const string &local_ip, const string &vhost, const string &app, const string &stream);
+    static Ptr get(toolkit::SocketHelper &helper, const std::string &local_ip, const std::string &vhost, const std::string &app, const std::string &stream, uint32_t multicast_ip = 0, uint16_t video_port = 0, uint16_t audio_port = 0);
     void setDetachCB(void *listener,const onDetach &cb);
 
-    string getMultiCasterIP();
+    std::string getMultiCasterIP();
     uint16_t getMultiCasterPort(TrackType trackType);
 
 private:
-    RtpMultiCaster(SocketHelper &helper, const string &local_ip, const string &vhost, const string &app, const string &stream);
+    RtpMultiCaster(toolkit::SocketHelper &helper, const std::string &local_ip, const std::string &vhost, const std::string &app, const std::string &stream, uint32_t multicast_ip, uint16_t video_port, uint16_t audio_port);
 
 private:
-    recursive_mutex _mtx;
-    Socket::Ptr _udp_sock[2];
+    std::recursive_mutex _mtx;
+    toolkit::Socket::Ptr _udp_sock[2];
     std::shared_ptr<uint32_t> _multicast_ip;
-    unordered_map<void * , onDetach > _detach_map;
+    std::unordered_map<void * , onDetach > _detach_map;
     RtspMediaSource::RingType::RingReader::Ptr _rtp_reader;
 };
 

@@ -8,10 +8,14 @@
  * may be found in the AUTHORS file in the root of the source tree.
  */
 
+#include "Rtmp/utils.h"
 #include "H265Rtmp.h"
 #ifdef ENABLE_MP4
 #include "mpeg4-hevc.h"
 #endif//ENABLE_MP4
+
+using namespace std;
+using namespace toolkit;
 
 namespace mediakit{
 
@@ -45,7 +49,8 @@ static bool getH265ConfigFrame(const RtmpPacket &thiz,string &frame) {
     auto extra = thiz.buffer.data() + 5;
     auto bytes = thiz.buffer.size() - 5;
 
-    struct mpeg4_hevc_t hevc = {0};
+    struct mpeg4_hevc_t hevc;
+    memset(&hevc, 0, sizeof(hevc));
     if (mpeg4_hevc_decoder_configuration_record_load((uint8_t *) extra, bytes, &hevc) > 0) {
         uint8_t *config = new uint8_t[bytes * 2];
         int size = mpeg4_hevc_to_nalu(&hevc, config, bytes * 2);
@@ -133,81 +138,68 @@ void H265RtmpEncoder::makeConfigPacket(){
     }
 }
 
-void H265RtmpEncoder::inputFrame(const Frame::Ptr &frame) {
-    auto data = frame->data() + frame->prefixSize();
-    auto len = frame->size() - frame->prefixSize();
-    auto type = H265_TYPE(((uint8_t*)data)[0]);
+void H265RtmpEncoder::flush() {
+    inputFrame(nullptr);
+}
 
-    switch (type) {
-        case H265Frame::NAL_SPS: {
-            if (!_got_config_frame) {
-                _sps = string(data, len);
-                makeConfigPacket();
-            }
-            break;
-        }
-        case H265Frame::NAL_PPS: {
-            if (!_got_config_frame) {
-                _pps = string(data, len);
-                makeConfigPacket();
-            }
-            break;
-        }
-        case H265Frame::NAL_VPS: {
-            if (!_got_config_frame) {
-                _vps = string(data, len);
-                makeConfigPacket();
+bool H265RtmpEncoder::inputFrame(const Frame::Ptr &frame) {
+    if (frame) {
+        auto data = frame->data() + frame->prefixSize();
+        auto len = frame->size() - frame->prefixSize();
+        auto type = H265_TYPE(data[0]);
+        switch (type) {
+            case H265Frame::NAL_SPS: {
+                if (!_got_config_frame) {
+                    _sps = string(data, len);
+                    makeConfigPacket();
+                }
                 break;
             }
+            case H265Frame::NAL_PPS: {
+                if (!_got_config_frame) {
+                    _pps = string(data, len);
+                    makeConfigPacket();
+                }
+                break;
+            }
+            case H265Frame::NAL_VPS: {
+                if (!_got_config_frame) {
+                    _vps = string(data, len);
+                    makeConfigPacket();
+                }
+                break;
+            }
+            default: break;
         }
-        case H265Frame::NAL_AUD:
-        case H265Frame::NAL_SEI_PREFIX:
-        case H265Frame::NAL_SEI_SUFFIX: return;
-        default: break;
-    }
-
-    if(frame->configFrame() && _rtmp_packet && _has_vcl){
-        // sps pps flush frame
-        RtmpCodec::inputRtmp(_rtmp_packet);
-        _rtmp_packet = nullptr;
-        _has_vcl = false;
-    }
-
-    if (_rtmp_packet && (_rtmp_packet->time_stamp != frame->dts() || (_has_vcl && type >= H265Frame::NAL_TRAIL_R && type <= H265Frame::NAL_RSV_IRAP_VCL23 && (data[2] >> 7 & 0x01) != 0))) {
-        RtmpCodec::inputRtmp(_rtmp_packet);
-        _has_vcl = false;
-        _rtmp_packet = nullptr;
-    }
-
-    if (type >= H265Frame::NAL_TRAIL_R && type <= H265Frame::NAL_RSV_IRAP_VCL23) {
-        _has_vcl = true;
     }
 
     if (!_rtmp_packet) {
-        //I or P or B frame
-        int8_t flags = FLV_CODEC_H265;
-        bool is_config = false;
-        flags |= (((frame->configFrame() || frame->keyFrame()) ? FLV_KEY_FRAME : FLV_INTER_FRAME) << 4);
-        // todo 必须是IDR帧才能是关键帧，否则有可能开始帧会花屏 SPS PPS VPS 打头的是一般I帧，但不一定是IDR帧
-        //  RtmpCodec::inputRtmp 时需要判断 是否是IDR帧,做出相应的修改
         _rtmp_packet = RtmpPacket::create();
-        _rtmp_packet->buffer.push_back(flags);
-        _rtmp_packet->buffer.push_back(!is_config);
-        int32_t cts = frame->pts() - frame->dts();
+        //flags/not_config/cts预占位
+        _rtmp_packet->buffer.resize(5);
+    }
+
+    return _merger.inputFrame(frame, [this](uint64_t dts, uint64_t pts, const Buffer::Ptr &, bool have_key_frame) {
+        //flags
+        _rtmp_packet->buffer[0] = FLV_CODEC_H265 | ((have_key_frame ? FLV_KEY_FRAME : FLV_INTER_FRAME) << 4);
+        //not config
+        _rtmp_packet->buffer[1] = true;
+        int32_t cts = pts - dts;
         if (cts < 0) {
             cts = 0;
         }
-        cts = htonl(cts);
-        _rtmp_packet->buffer.append((char *) &cts + 1, 3);
+        //cts
+        set_be24(&_rtmp_packet->buffer[2], cts);
+
+        _rtmp_packet->time_stamp = dts;
+        _rtmp_packet->body_size = _rtmp_packet->buffer.size();
         _rtmp_packet->chunk_id = CHUNK_VIDEO;
         _rtmp_packet->stream_index = STREAM_MEDIA;
-        _rtmp_packet->time_stamp = frame->dts();
         _rtmp_packet->type_id = MSG_VIDEO;
-    }
-    uint32_t size = htonl((uint32_t) len);
-    _rtmp_packet->buffer.append((char *) &size, 4);
-    _rtmp_packet->buffer.append(data, len);
-    _rtmp_packet->body_size = _rtmp_packet->buffer.size();
+        //输出rtmp packet
+        RtmpCodec::inputRtmp(_rtmp_packet);
+        _rtmp_packet = nullptr;
+        }, &_rtmp_packet->buffer);
 }
 
 void H265RtmpEncoder::makeVideoConfigPkt() {
@@ -222,7 +214,8 @@ void H265RtmpEncoder::makeVideoConfigPkt() {
     //cts
     rtmpPkt->buffer.append("\x0\x0\x0", 3);
 
-    struct mpeg4_hevc_t hevc = {0};
+    struct mpeg4_hevc_t hevc;
+    memset(&hevc, 0, sizeof(hevc));
     string vps_sps_pps = string("\x00\x00\x00\x01", 4) + _vps +
                          string("\x00\x00\x00\x01", 4) + _sps +
                          string("\x00\x00\x00\x01", 4) + _pps;

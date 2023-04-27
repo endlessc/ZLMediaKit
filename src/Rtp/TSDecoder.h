@@ -15,19 +15,18 @@
 #include "Http/HttpRequestSplitter.h"
 #include "Decoder.h"
 
-using namespace toolkit;
-namespace mediakit {
-
 #define TS_PACKET_SIZE		188
 #define TS_SYNC_BYTE        0x47
+
+namespace mediakit {
 
 //TS包分割器，用于split一个一个的ts包
 class TSSegment : public HttpRequestSplitter {
 public:
     typedef std::function<void(const char *data,size_t len)> onSegment;
     TSSegment(size_t size = TS_PACKET_SIZE) : _size(size){}
-    ~TSSegment(){}
-    void setOnSegment(const onSegment &cb);
+    ~TSSegment() = default;
+    void setOnSegment(onSegment cb);
     static bool isTSPacket(const char *data, size_t len);
 
 protected:
@@ -46,14 +45,10 @@ public:
     TSDecoder();
     ~TSDecoder();
     ssize_t input(const uint8_t* data, size_t bytes) override ;
-    void setOnDecode(onDecode cb) override;
-    void setOnStream(onStream cb) override;
 
 private:
     TSSegment _ts_segment;
     struct ts_demuxer_t* _demuxer_ctx = nullptr;
-    onDecode _on_decode;
-    onStream _on_stream;
 };
 #endif//defined(ENABLE_HLS)
 

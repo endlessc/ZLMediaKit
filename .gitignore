@@ -35,9 +35,11 @@
 /cmake-build-release/
 /linux/
 /.vs/
+/.vscode/
 /.idea/
 /c_wrapper/.idea/
 /release/
+/out/
 /Android/.idea/
 /Android/app/src/main/cpp/libs_export/
 /3rdpart/media-server/.idea/

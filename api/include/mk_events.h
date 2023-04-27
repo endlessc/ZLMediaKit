@@ -53,8 +53,10 @@ typedef struct {
      * 未找到流后会广播该事件，请在监听该事件后去拉流或其他方式产生流，这样就能按需拉流了
      * @param url_info 播放url相关信息
      * @param sender 播放客户端相关信息
+     * @return 1 直接关闭
+     *         0 等待流注册
      */
-    void (API_CALL *on_mk_media_not_found)(const mk_media_info url_info,
+    int (API_CALL *on_mk_media_not_found)(const mk_media_info url_info,
                                            const mk_sock_info sender);
 
     /**
@@ -152,6 +154,18 @@ typedef struct {
                                        size_t total_seconds,
                                        int is_player,
                                        const mk_sock_info sender);
+
+
+    /**
+     * 日志输出广播
+     * @param level 日志级别
+     * @param file 源文件名
+     * @param line 源文件行
+     * @param function 源文件函数名
+     * @param message 日志内容
+     */
+    void (API_CALL *on_mk_log)(int level, const char *file, int line, const char *function, const char *message);
+
 } mk_events;
 
 
@@ -166,4 +180,3 @@ API_EXPORT void API_CALL mk_events_listen(const mk_events *events);
 }
 #endif
 #endif //MK_EVENTS_H
-

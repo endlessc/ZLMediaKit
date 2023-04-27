@@ -16,8 +16,6 @@
 #include <vector>
 #include <memory>
 #include "Network/Buffer.h"
-using namespace std;
-using namespace toolkit;
 
 //websocket组合包最大不得超过4MB(防止内存爆炸)
 #define MAX_WS_PACKET (4 * 1024 * 1024)
@@ -26,7 +24,7 @@ namespace mediakit {
 
 class WebSocketHeader {
 public:
-    typedef std::shared_ptr<WebSocketHeader> Ptr;
+    using Ptr = std::shared_ptr<WebSocketHeader>;
     typedef enum {
         CONTINUATION = 0x0,
         TEXT = 0x1,
@@ -53,7 +51,7 @@ public:
         //根据内存地址设置掩码随机数
         _mask.assign((uint8_t*)(&ptr), (uint8_t*)(&ptr) + 4);
     }
-    virtual ~WebSocketHeader(){}
+    virtual ~WebSocketHeader() = default;
 
 public:
     bool _fin;
@@ -61,19 +59,19 @@ public:
     Type _opcode;
     bool _mask_flag;
     size_t _payload_len;
-    vector<uint8_t > _mask;
+    std::vector<uint8_t > _mask;
 };
 
 //websocket协议收到的字符串类型缓存，用户协议层获取该数据传输的方式
-class WebSocketBuffer : public BufferString {
+class WebSocketBuffer : public toolkit::BufferString {
 public:
-    typedef std::shared_ptr<WebSocketBuffer> Ptr;
+    using Ptr = std::shared_ptr<WebSocketBuffer>;
 
     template<typename ...ARGS>
     WebSocketBuffer(WebSocketHeader::Type headType, bool fin, ARGS &&...args)
-            :  BufferString(std::forward<ARGS>(args)...), _fin(fin), _head_type(headType){}
+            :  toolkit::BufferString(std::forward<ARGS>(args)...), _fin(fin), _head_type(headType){}
 
-    ~WebSocketBuffer() override {}
+    ~WebSocketBuffer() override = default;
 
     WebSocketHeader::Type headType() const { return _head_type; }
 
@@ -86,8 +84,8 @@ private:
 
 class WebSocketSplitter : public WebSocketHeader{
 public:
-    WebSocketSplitter(){}
-    virtual ~WebSocketSplitter(){}
+    WebSocketSplitter() = default;
+    virtual ~WebSocketSplitter() = default;
 
     /**
      * 输入数据以便解包webSocket数据以及处理粘包问题
@@ -103,7 +101,7 @@ public:
      * @param header 数据头
      * @param buffer 负载数据
      */
-    void encode(const WebSocketHeader &header,const Buffer::Ptr &buffer);
+    void encode(const WebSocketHeader &header,const toolkit::Buffer::Ptr &buffer);
 
 protected:
     /**
@@ -132,7 +130,7 @@ protected:
      * @param ptr 数据指针
      * @param len 数据指针长度
      */
-    virtual void onWebSocketEncodeData(Buffer::Ptr buffer){};
+    virtual void onWebSocketEncodeData(toolkit::Buffer::Ptr buffer){};
 
 private:
     void onPayloadData(uint8_t *data, size_t len);
@@ -141,7 +139,7 @@ private:
     bool _got_header = false;
     int _mask_offset = 0;
     size_t _payload_offset = 0;
-    string _remain_data;
+    std::string _remain_data;
 };
 
 } /* namespace mediakit */

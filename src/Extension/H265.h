@@ -13,21 +13,21 @@
 
 #include "Frame.h"
 #include "Track.h"
-#include "Util/base64.h"
 #include "H264.h"
+
 #define H265_TYPE(v) (((uint8_t)(v) >> 1) & 0x3f)
-using namespace toolkit;
 
 namespace mediakit {
 
-bool getHEVCInfo(const string &strVps, const string &strSps, int &iVideoWidth, int &iVideoHeight, float &iVideoFps);
+bool getHEVCInfo(const std::string &strVps, const std::string &strSps, int &iVideoWidth, int &iVideoHeight, float &iVideoFps);
 
-/**
- * 265帧类
- */
-class H265Frame : public FrameImp {
+template<typename Parent>
+class H265FrameHelper : public Parent{
 public:
-    using Ptr = std::shared_ptr<H265Frame>;
+    friend class FrameImp;
+    friend class toolkit::ResourcePool_l<H265FrameHelper>;
+    using Ptr = std::shared_ptr<H265FrameHelper>;
+
     enum {
         NAL_TRAIL_N = 0,
         NAL_TRAIL_R = 1,
@@ -59,24 +59,59 @@ public:
         NAL_SEI_SUFFIX = 40,
     };
 
-    bool keyFrame() const override;
-    bool configFrame() const override;
-    static bool isKeyFrame(int type, const char* ptr);
+    template<typename ...ARGS>
+    H265FrameHelper(ARGS &&...args): Parent(std::forward<ARGS>(args)...) {
+        this->_codec_id = CodecH265;
+    }
 
-protected:
-    friend class FrameImp;
-    friend class ResourcePool_l<H265Frame>;
-    H265Frame();
+    ~H265FrameHelper() override = default;
+
+    bool keyFrame() const override {
+        auto nal_ptr = (uint8_t *) this->data() + this->prefixSize();
+        auto type = H265_TYPE(*nal_ptr);
+        // 参考自FFmpeg: IRAP VCL NAL unit types span the range
+        // [BLA_W_LP (16), RSV_IRAP_VCL23 (23)].
+        return (type >= NAL_BLA_W_LP && type <= NAL_RSV_IRAP_VCL23) && decodeAble() ;
+    }
+
+    bool configFrame() const override {
+        auto nal_ptr = (uint8_t *) this->data() + this->prefixSize();
+        switch (H265_TYPE(*nal_ptr)) {
+            case NAL_VPS:
+            case NAL_SPS:
+            case NAL_PPS : return true;
+            default : return false;
+        }
+    }
+
+    bool dropAble() const override {
+        auto nal_ptr = (uint8_t *) this->data() + this->prefixSize();
+        switch (H265_TYPE(*nal_ptr)) {
+            case NAL_AUD:
+            case NAL_SEI_SUFFIX:
+            case NAL_SEI_PREFIX: return true;
+            default: return false;
+        }
+    }
+
+    bool decodeAble() const override {
+        auto nal_ptr = (uint8_t *) this->data() + this->prefixSize();
+        auto type = H265_TYPE(*nal_ptr);
+        //多slice情况下, first_slice_segment_in_pic_flag 表示其为一帧的开始
+        return type >= NAL_TRAIL_N && type <= NAL_RSV_IRAP_VCL23 && (nal_ptr[2] & 0x80);
+    }
 };
 
-class H265FrameNoCacheAble : public FrameFromPtr {
-public:
-    using Ptr = std::shared_ptr<H265FrameNoCacheAble>;
+/**
+ * 265帧类
+ */
+using H265Frame = H265FrameHelper<FrameImp>;
 
-    H265FrameNoCacheAble(char *ptr, size_t size, uint32_t dts,uint32_t pts, size_t prefix_size = 4);
-    bool keyFrame() const override;
-    bool configFrame() const override;
-};
+/**
+ * 防止内存拷贝的H265类
+ * 用户可以通过该类型快速把一个指针无拷贝的包装成Frame类
+ */
+using H265FrameNoCacheAble = H265FrameHelper<FrameFromPtr>;
 
 /**
 * 265视频通道
@@ -100,27 +135,27 @@ public:
      * @param sps_prefix_len 265头长度，可以为3个或4个字节，一般为0x00 00 00 01
      * @param pps_prefix_len 265头长度，可以为3个或4个字节，一般为0x00 00 00 01
      */
-    H265Track(const string &vps,const string &sps, const string &pps,int vps_prefix_len = 4, int sps_prefix_len = 4, int pps_prefix_len = 4);
+    H265Track(const std::string &vps,const std::string &sps, const std::string &pps,int vps_prefix_len = 4, int sps_prefix_len = 4, int pps_prefix_len = 4);
 
     /**
      * 返回不带0x00 00 00 01头的vps/sps/pps
      */
-    const string &getVps() const;
-    const string &getSps() const;
-    const string &getPps() const;
+    const std::string &getVps() const;
+    const std::string &getSps() const;
+    const std::string &getPps() const;
 
     bool ready() override;
     CodecId getCodecId() const override;
     int getVideoWidth() const override;
     int getVideoHeight() const override;
     float getVideoFps() const override;
-    void inputFrame(const Frame::Ptr &frame) override;
+    bool inputFrame(const Frame::Ptr &frame) override;
 
 private:
     void onReady();
     Sdp::Ptr getSdp() override;
     Track::Ptr clone() override;
-    void inputFrame_l(const Frame::Ptr &frame);
+    bool inputFrame_l(const Frame::Ptr &frame);
     void insertConfigFrame(const Frame::Ptr &frame);
 
 private:
@@ -128,9 +163,9 @@ private:
     int _width = 0;
     int _height = 0;
     float _fps = 0;
-    string _vps;
-    string _sps;
-    string _pps;
+    std::string _vps;
+    std::string _sps;
+    std::string _pps;
 };
 
 }//namespace mediakit

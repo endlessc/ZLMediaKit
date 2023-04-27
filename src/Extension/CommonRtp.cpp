@@ -10,6 +10,8 @@
 
 #include "CommonRtp.h"
 
+using namespace mediakit;
+
 CommonRtpDecoder::CommonRtpDecoder(CodecId codec, size_t max_frame_size ){
     _codec = codec;
     _max_frame_size = max_frame_size;
@@ -26,14 +28,14 @@ void CommonRtpDecoder::obtainFrame() {
 }
 
 bool CommonRtpDecoder::inputRtp(const RtpPacket::Ptr &rtp, bool){
-    auto payload = rtp->getPayload();
-    auto size = rtp->getPayloadSize();
-    auto stamp = rtp->getStampMS();
-    auto seq = rtp->getSeq();
-    if (size <= 0) {
+    auto payload_size = rtp->getPayloadSize();
+    if (payload_size <= 0) {
         //无实际负载
         return false;
     }
+    auto payload = rtp->getPayload();
+    auto stamp = rtp->getStampMS();
+    auto seq = rtp->getSeq();
 
     if (_frame->_dts != stamp || _frame->_buffer.size() > _max_frame_size) {
         //时间戳发生变化或者缓存超过MAX_FRAME_SIZE，则清空上帧数据
@@ -54,7 +56,7 @@ bool CommonRtpDecoder::inputRtp(const RtpPacket::Ptr &rtp, bool){
     }
 
     if (!_drop_flag) {
-        _frame->_buffer.append((char *)payload, size);
+        _frame->_buffer.append((char *)payload, payload_size);
     }
 
     _last_seq = seq;
@@ -68,13 +70,13 @@ CommonRtpEncoder::CommonRtpEncoder(CodecId codec, uint32_t ssrc, uint32_t mtu_si
         : CommonRtpDecoder(codec), RtpInfo(ssrc, mtu_size, sample_rate, payload_type, interleaved) {
 }
 
-void CommonRtpEncoder::inputFrame(const Frame::Ptr &frame){
+bool CommonRtpEncoder::inputFrame(const Frame::Ptr &frame){
     auto stamp = frame->pts();
     auto ptr = frame->data() + frame->prefixSize();
     auto len = frame->size() - frame->prefixSize();
     auto remain_size = len;
     auto max_size = getMaxSize();
-
+    bool is_key = frame->keyFrame();
     bool mark = false;
     while (remain_size > 0) {
         size_t rtp_size;
@@ -84,8 +86,10 @@ void CommonRtpEncoder::inputFrame(const Frame::Ptr &frame){
             rtp_size = remain_size;
             mark = true;
         }
-        RtpCodec::inputRtp(makeRtp(getTrackType(), ptr, rtp_size, mark, stamp), false);
+        RtpCodec::inputRtp(makeRtp(getTrackType(), ptr, rtp_size, mark, stamp), is_key);
         ptr += rtp_size;
         remain_size -= rtp_size;
+        is_key = false;
     }
+    return len > 0;
 }

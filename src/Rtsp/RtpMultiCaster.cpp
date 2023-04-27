@@ -14,6 +14,7 @@
 #include "Util/util.h"
 #include "Network/sockutil.h"
 #include "RtspSession.h"
+#include "Common/config.h"
 
 using namespace std;
 using namespace toolkit;
@@ -45,10 +46,12 @@ static uint32_t addressToInt(const string &ip){
 
 std::shared_ptr<uint32_t> MultiCastAddressMaker::obtain(uint32_t max_try) {
     lock_guard<recursive_mutex> lck(_mtx);
-    GET_CONFIG(string, addrMinStr, MultiCast::kAddrMin);
-    GET_CONFIG(string, addrMaxStr, MultiCast::kAddrMax);
-    uint32_t addrMin = addressToInt(addrMinStr);
-    uint32_t addrMax = addressToInt(addrMaxStr);
+    GET_CONFIG_FUNC(uint32_t, addrMin, MultiCast::kAddrMin, [](const string &str) {
+        return addressToInt(str);
+    });
+    GET_CONFIG_FUNC(uint32_t, addrMax, MultiCast::kAddrMax, [](const string &str) {
+        return addressToInt(str);
+    });
 
     if (_addr > addrMax || _addr == 0) {
         _addr = addrMin;
@@ -96,13 +99,13 @@ RtpMultiCaster::~RtpMultiCaster() {
     DebugL;
 }
 
-RtpMultiCaster::RtpMultiCaster(SocketHelper &helper, const string &local_ip, const string &vhost, const string &app, const string &stream) {
+RtpMultiCaster::RtpMultiCaster(SocketHelper &helper, const string &local_ip, const string &vhost, const string &app, const string &stream, uint32_t multicast_ip, uint16_t video_port, uint16_t audio_port) {
     auto src = dynamic_pointer_cast<RtspMediaSource>(MediaSource::find(RTSP_SCHEMA, vhost, app, stream));
     if (!src) {
         auto err = StrPrinter << "未找到媒体源:" << vhost << " " << app << " " << stream << endl;
         throw std::runtime_error(err);
     }
-    _multicast_ip = MultiCastAddressMaker::Instance().obtain();
+    _multicast_ip = (multicast_ip) ? make_shared<uint32_t>(multicast_ip) : MultiCastAddressMaker::Instance().obtain();
     if (!_multicast_ip) {
         throw std::runtime_error("获取组播地址失败");
     }
@@ -110,7 +113,7 @@ RtpMultiCaster::RtpMultiCaster(SocketHelper &helper, const string &local_ip, con
     for (auto i = 0; i < 2; ++i) {
         //创建udp socket, 数组下标为TrackType
         _udp_sock[i] = helper.createSocket();
-        if (!_udp_sock[i]->bindUdpSock(0, local_ip.data())) {
+        if (!_udp_sock[i]->bindUdpSock((i == TrackVideo) ? video_port : audio_port, local_ip.data())) {
             auto err = StrPrinter << "绑定UDP端口失败:" << local_ip << endl;
             throw std::runtime_error(err);
         }
@@ -130,6 +133,7 @@ RtpMultiCaster::RtpMultiCaster(SocketHelper &helper, const string &local_ip, con
         _udp_sock[i]->bindPeerAddr((struct sockaddr *) &peer);
     }
 
+    src->pause(false);
     _rtp_reader = src->getRing()->attach(helper.getPoller());
     _rtp_reader->setReadCB([this](const RtspMediaSource::RingDataType &pkt) {
         size_t i = 0;
@@ -167,11 +171,11 @@ string RtpMultiCaster::getMultiCasterIP() {
     return SockUtil::inet_ntoa(addr);
 }
 
-RtpMultiCaster::Ptr RtpMultiCaster::get(SocketHelper &helper, const string &local_ip, const string &vhost, const string &app, const string &stream) {
-    static auto on_create = [](SocketHelper &helper, const string &local_ip, const string &vhost, const string &app, const string &stream){
+RtpMultiCaster::Ptr RtpMultiCaster::get(SocketHelper &helper, const string &local_ip, const string &vhost, const string &app, const string &stream, uint32_t multicast_ip, uint16_t video_port, uint16_t audio_port) {
+    static auto on_create = [](SocketHelper &helper, const string &local_ip, const string &vhost, const string &app, const string &stream, uint32_t multicast_ip, uint16_t video_port, uint16_t audio_port){
         try {
             auto poller = helper.getPoller();
-            auto ret = RtpMultiCaster::Ptr(new RtpMultiCaster(helper, local_ip, vhost, app, stream), [poller](RtpMultiCaster *ptr) {
+            auto ret = RtpMultiCaster::Ptr(new RtpMultiCaster(helper, local_ip, vhost, app, stream, multicast_ip, video_port, audio_port), [poller](RtpMultiCaster *ptr) {
                 poller->async([ptr]() {
                     delete ptr;
                 });
@@ -190,12 +194,12 @@ RtpMultiCaster::Ptr RtpMultiCaster::get(SocketHelper &helper, const string &loca
     lock_guard<recursive_mutex> lck(g_mtx);
     auto it = g_multi_caster_map.find(strKey);
     if (it == g_multi_caster_map.end()) {
-        return on_create(helper, local_ip, vhost, app, stream);
+        return on_create(helper, local_ip, vhost, app, stream, multicast_ip, video_port, audio_port);
     }
     auto ret = it->second.lock();
     if (!ret) {
         g_multi_caster_map.erase(it);
-        return on_create(helper, local_ip, vhost, app, stream);
+        return on_create(helper, local_ip, vhost, app, stream, multicast_ip, video_port, audio_port);
     }
     return ret;
 }

@@ -15,6 +15,11 @@
 #pragma pack(push, 1)
 #endif // defined(_WIN32)
 
+using namespace std;
+using namespace toolkit;
+
+namespace mediakit {
+
 //https://tools.ietf.org/html/draft-holmer-rmcat-transport-wide-cc-extensions-01
 //https://tools.ietf.org/html/rfc5285
 
@@ -162,9 +167,9 @@ size_t RtpExt::size() const {
     return _size;
 }
 
-const char& RtpExt::operator[](size_t pos) const{
+const uint8_t& RtpExt::operator[](size_t pos) const{
     CHECK(pos < _size);
-    return _data[pos];
+    return ((uint8_t*)_data)[pos];
 }
 
 RtpExt::operator std::string() const{
@@ -185,29 +190,12 @@ map<uint8_t/*id*/, RtpExt/*data*/> RtpExt::getExtValue(const RtpHeader *header) 
         appendExt<RtpExtOneByte>(ret, ptr, end);
         return ret;
     }
-    if ((reserved & 0xFFF0) >> 4 == kTwoByteHeader) {
+    if ((reserved & 0xFFF0) == kTwoByteHeader) {
         appendExt<RtpExtTwoByte>(ret, ptr, end);
         return ret;
     }
     return ret;
 }
-
-#define RTP_EXT_MAP(XX) \
-    XX(ssrc_audio_level,            "urn:ietf:params:rtp-hdrext:ssrc-audio-level") \
-    XX(abs_send_time,               "http://www.webrtc.org/experiments/rtp-hdrext/abs-send-time") \
-    XX(transport_cc,                "http://www.ietf.org/id/draft-holmer-rmcat-transport-wide-cc-extensions-01") \
-    XX(sdes_mid,                    "urn:ietf:params:rtp-hdrext:sdes:mid") \
-    XX(sdes_rtp_stream_id,          "urn:ietf:params:rtp-hdrext:sdes:rtp-stream-id") \
-    XX(sdes_repaired_rtp_stream_id, "urn:ietf:params:rtp-hdrext:sdes:repaired-rtp-stream-id") \
-    XX(video_timing,                "http://www.webrtc.org/experiments/rtp-hdrext/video-timing") \
-    XX(color_space,                 "http://www.webrtc.org/experiments/rtp-hdrext/color-space") \
-    XX(csrc_audio_level,            "urn:ietf:params:rtp-hdrext:csrc-audio-level") \
-    XX(framemarking,                "http://tools.ietf.org/html/draft-ietf-avtext-framemarking-07") \
-    XX(video_content_type,          "http://www.webrtc.org/experiments/rtp-hdrext/video-content-type") \
-    XX(playout_delay,               "http://www.webrtc.org/experiments/rtp-hdrext/playout-delay") \
-    XX(video_orientation,           "urn:3gpp:video-orientation") \
-    XX(toffset,                     "urn:ietf:params:rtp-hdrext:toffset") \
-    XX(encrypt,                     "urn:ietf:params:rtp-hdrext:encrypt")
 
 #define XX(type, url) {RtpExtType::type , url},
 static map<RtpExtType/*id*/, string/*ext*/> s_type_to_url = {RTP_EXT_MAP(XX)};
@@ -256,7 +244,7 @@ string RtpExt::dumpString() const {
             break;
         }
         case RtpExtType::transport_cc : {
-            printer << "twcc seq:" << getTransportCCSeq();
+            printer << "twcc ext seq:" << getTransportCCSeq();
             break;
         }
         case RtpExtType::sdes_mid : {
@@ -563,6 +551,10 @@ RtpExtType RtpExt::getType() const {
     return _type;
 }
 
+RtpExt::operator bool() const {
+    return _ext != nullptr;
+}
+
 RtpExtContext::RtpExtContext(const RtcMedia &m){
     for (auto &ext : m.extmap) {
         auto ext_type = RtpExt::getExtType(ext.ext);
@@ -583,14 +575,15 @@ void RtpExtContext::setRid(uint32_t ssrc, const string &rid) {
     _ssrc_to_rid[ssrc] = rid;
 }
 
-void RtpExtContext::changeRtpExtId(const RtpHeader *header, bool is_recv, string *rid_ptr) {
+RtpExt RtpExtContext::changeRtpExtId(const RtpHeader *header, bool is_recv, string *rid_ptr, RtpExtType type) {
     string rid, repaired_rid;
+    RtpExt ret;
     auto ext_map = RtpExt::getExtValue(header);
     for (auto &pr : ext_map) {
         if (is_recv) {
             auto it = _rtp_ext_id_to_type.find(pr.first);
             if (it == _rtp_ext_id_to_type.end()) {
-                WarnL << "接收rtp时,忽略不识别的rtp ext, id=" << (int) pr.first;
+                //TraceL << "接收rtp时,忽略不识别的rtp ext, id=" << (int) pr.first;
                 pr.second.clearExt();
                 continue;
             }
@@ -606,17 +599,20 @@ void RtpExtContext::changeRtpExtId(const RtpHeader *header, bool is_recv, string
             pr.second.setType((RtpExtType) pr.first);
             auto it = _rtp_ext_type_to_id.find((RtpExtType) pr.first);
             if (it == _rtp_ext_type_to_id.end()) {
-                WarnL << "发送rtp时, 忽略不被客户端支持rtp ext:" << pr.second.dumpString();
+                //TraceL << "发送rtp时, 忽略不被客户端支持rtp ext:" << pr.second.dumpString();
                 pr.second.clearExt();
                 continue;
             }
             //重新赋值ext id为客户端sdp声明的类型
             pr.second.setExtId(it->second);
         }
+        if (pr.second.getType() == type) {
+            ret = pr.second;
+        }
     }
 
     if (!is_recv) {
-        return;
+        return ret;
     }
     if (rid.empty()) {
         rid = repaired_rid;
@@ -636,6 +632,7 @@ void RtpExtContext::changeRtpExtId(const RtpHeader *header, bool is_recv, string
     if (rid_ptr) {
         *rid_ptr = rid;
     }
+    return ret;
 }
 
 void RtpExtContext::setOnGetRtp(OnGetRtp cb) {
@@ -648,3 +645,4 @@ void RtpExtContext::onGetRtp(uint8_t pt, uint32_t ssrc, const string &rid){
     }
 }
 
+}// namespace mediakit

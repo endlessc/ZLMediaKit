@@ -14,7 +14,6 @@
 #include <set>
 #include <cstdint>
 #include "Util/TimeTicker.h"
-using namespace toolkit;
 
 namespace mediakit {
 
@@ -29,9 +28,12 @@ public:
      * @return 时间戳增量
      */
     int64_t deltaStamp(int64_t stamp);
+    int64_t relativeStamp(int64_t stamp);
+    int64_t relativeStamp();
 
 private:
     int64_t _last_stamp = 0;
+    int64_t _relative_stamp = 0;
 };
 
 //该类解决时间戳回环、回退问题
@@ -87,7 +89,7 @@ private:
     int64_t _last_dts_in = 0;
     int64_t _last_dts_out = 0;
     int64_t _last_pts_out = 0;
-    SmoothTicker _ticker;
+    toolkit::SmoothTicker _ticker;
     bool _playback = false;
     Stamp *_sync_master = nullptr;
 };
@@ -98,20 +100,37 @@ class DtsGenerator{
 public:
     DtsGenerator() = default;
     ~DtsGenerator() = default;
-    bool getDts(uint32_t pts, uint32_t &dts);
+    bool getDts(uint64_t pts, uint64_t &dts);
 
 private:
-    bool getDts_l(uint32_t pts, uint32_t &dts);
+    bool getDts_l(uint64_t pts, uint64_t &dts);
 
 private:
-    uint32_t _dts_pts_offset = 0;
-    uint32_t _last_dts = 0;
-    uint32_t _last_pts = 0;
-    uint32_t _last_max_pts = 0;
+    uint64_t _dts_pts_offset = 0;
+    uint64_t _last_dts = 0;
+    uint64_t _last_pts = 0;
+    uint64_t _last_max_pts = 0;
     size_t _frames_since_last_max_pts = 0;
     size_t _sorter_max_size = 0;
     size_t _count_sorter_max_size = 0;
-    set<uint32_t> _pts_sorter;
+    std::set<uint64_t> _pts_sorter;
+};
+
+class NtpStamp {
+public:
+    NtpStamp() = default;
+    ~NtpStamp() = default;
+
+    void setNtpStamp(uint32_t rtp_stamp, uint64_t ntp_stamp_ms);
+    uint64_t getNtpStamp(uint32_t rtp_stamp, uint32_t sample_rate);
+
+private:
+    void update(uint32_t rtp_stamp, uint64_t ntp_stamp_ms);
+    uint64_t getNtpStamp_l(uint32_t rtp_stamp, uint32_t sample_rate);
+
+private:
+    uint32_t _last_rtp_stamp = 0;
+    uint64_t _last_ntp_stamp_ms = 0;
 };
 
 }//namespace mediakit

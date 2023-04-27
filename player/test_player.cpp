@@ -11,10 +11,11 @@
 #include <signal.h>
 #include "Util/logger.h"
 #include <iostream>
+#include "Common/config.h"
 #include "Rtsp/UDPServer.h"
 #include "Player/MediaPlayer.h"
 #include "Util/onceToken.h"
-#include "FFMpegDecoder.h"
+#include "Codec/Transcode.h"
 #include "YuvDisplayer.h"
 #include "AudioSRC.h"
 using namespace std;
@@ -53,7 +54,7 @@ int main(int argc, char *argv[]) {
     Logger::Instance().add(std::make_shared<ConsoleChannel>());
     Logger::Instance().setWriter(std::make_shared<AsyncLogWriter>());
 
-    if (argc != 3) {
+    if (argc < 3) {
         ErrorL << "\r\n测试方法：./test_player rtxp_url rtp_type\r\n"
                << "例如：./test_player rtsp://admin:123456@127.0.0.1/live/0 0\r\n"
                << endl;
@@ -83,13 +84,9 @@ int main(int argc, char *argv[]) {
                     return true;
                 });
             });
-            auto merger = std::make_shared<FrameMerger>(FrameMerger::h264_prefix);
-            auto delegate = std::make_shared<FrameWriterInterfaceHelper>([decoder, merger](const Frame::Ptr &frame) {
-                merger->inputFrame(frame, [&](uint32_t dts, uint32_t pts, const Buffer::Ptr &buffer, bool have_idr) {
-                    decoder->inputFrame(buffer->data(), buffer->size(), dts, pts);
-                });
+            videoTrack->addDelegate([decoder](const Frame::Ptr &frame) {
+                return decoder->inputFrame(frame, false, true);
             });
-            videoTrack->addDelegate(delegate);
         }
 
         if (audioTrack) {
@@ -97,17 +94,33 @@ int main(int argc, char *argv[]) {
             auto audio_player = std::make_shared<AudioPlayer>();
             //FFmpeg解码时已经统一转换为16位整型pcm
             audio_player->setup(audioTrack->getAudioSampleRate(), audioTrack->getAudioChannel(), AUDIO_S16);
-            decoder->setOnDecode([audio_player](const FFmpegFrame::Ptr &pcm) {
-                audio_player->playPCM((const char *) (pcm->get()->data[0]), pcm->get()->linesize[0]);
+            FFmpegSwr::Ptr swr;
+
+            decoder->setOnDecode([audio_player, swr](const FFmpegFrame::Ptr &frame) mutable{
+                if (!swr) {
+                    swr = std::make_shared<FFmpegSwr>(AV_SAMPLE_FMT_S16, frame->get()->channels,
+                                                      frame->get()->channel_layout, frame->get()->sample_rate);
+                }
+                auto pcm = swr->inputFrame(frame);
+                auto len = pcm->get()->nb_samples * pcm->get()->channels * av_get_bytes_per_sample((enum AVSampleFormat)pcm->get()->format);
+                audio_player->playPCM((const char *) (pcm->get()->data[0]), MIN(len, frame->get()->linesize[0]));
             });
-            auto audio_delegate = std::make_shared<FrameWriterInterfaceHelper>( [decoder](const Frame::Ptr &frame) {
-                decoder->inputFrame(frame);
+            audioTrack->addDelegate([decoder](const Frame::Ptr &frame) {
+                return decoder->inputFrame(frame, false, true);
             });
-            audioTrack->addDelegate(audio_delegate);
         }
     });
 
-    (*player)[kRtpType] = atoi(argv[2]);
+    player->setOnShutdown([](const SockException &ex){
+        WarnL << "play shutdown: " << ex.what();
+    });
+
+    (*player)[Client::kRtpType] = atoi(argv[2]);
+    //不等待track ready再回调播放成功事件，这样可以加快秒开速度
+    (*player)[Client::kWaitTrackReady] = false;
+    if (argc > 3) {
+        (*player)[Client::kPlayTrack] = atoi(argv[3]);
+    }
     player->play(argv[1]);
     SDLDisplayerHelper::Instance().runLoop();
     return 0;

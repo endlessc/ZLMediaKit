@@ -12,10 +12,9 @@
 #define ZLMEDIAKIT_H264RTPCODEC_H
 
 #include "Rtsp/RtpCodec.h"
-#include "Util/ResourcePool.h"
 #include "Extension/H264.h"
+// for DtsGenerator
 #include "Common/Stamp.h"
-using namespace toolkit;
 
 namespace mediakit{
 
@@ -26,7 +25,7 @@ namespace mediakit{
  */
 class H264RtpDecoder : public RtpCodec{
 public:
-    typedef std::shared_ptr<H264RtpDecoder> Ptr;
+    using Ptr = std::shared_ptr<H264RtpDecoder>;
 
     H264RtpDecoder();
     ~H264RtpDecoder() {}
@@ -43,13 +42,18 @@ public:
     }
 
 private:
+    bool singleFrame(const RtpPacket::Ptr &rtp, const uint8_t *ptr, ssize_t size, uint64_t stamp);
+    bool unpackStapA(const RtpPacket::Ptr &rtp, const uint8_t *ptr, ssize_t size, uint64_t stamp);
+    bool mergeFu(const RtpPacket::Ptr &rtp, const uint8_t *ptr, ssize_t size, uint64_t stamp, uint16_t seq);
+
     bool decodeRtp(const RtpPacket::Ptr &rtp);
-    void onGetH264(const H264Frame::Ptr &frame);
     H264Frame::Ptr obtainFrame();
+    void outputFrame(const RtpPacket::Ptr &rtp, const H264Frame::Ptr &frame);
 
 private:
+    bool _gop_dropped = false;
+    bool _fu_dropped = true;
     uint16_t _last_seq = 0;
-    size_t _max_frame_size = 0;
     H264Frame::Ptr _frame;
     DtsGenerator _dts_generator;
 };
@@ -59,7 +63,7 @@ private:
  */
 class H264RtpEncoder : public H264RtpDecoder ,public RtpInfo{
 public:
-    typedef std::shared_ptr<H264RtpEncoder> Ptr;
+    using Ptr = std::shared_ptr<H264RtpEncoder>;
 
     /**
      * @param ssrc ssrc
@@ -79,14 +83,19 @@ public:
      * 输入264帧
      * @param frame 帧数据，必须
      */
-    void inputFrame(const Frame::Ptr &frame) override;
+    bool inputFrame(const Frame::Ptr &frame) override;
+
+    /**
+     * 刷新输出所有frame缓存
+     */
+    void flush() override;
 
 private:
-    void insertConfigFrame(uint32_t pts);
-    void inputFrame_l(const Frame::Ptr &frame, bool is_mark);
-    void packRtp(const char *data, size_t len, uint32_t pts, bool is_mark, bool gop_pos);
-    void packRtpFu(const char *data, size_t len, uint32_t pts, bool is_mark, bool gop_pos);
-    void packRtpStapA(const char *data, size_t len, uint32_t pts, bool is_mark, bool gop_pos);
+    void insertConfigFrame(uint64_t pts);
+    bool inputFrame_l(const Frame::Ptr &frame, bool is_mark);
+    void packRtp(const char *data, size_t len, uint64_t pts, bool is_mark, bool gop_pos);
+    void packRtpFu(const char *data, size_t len, uint64_t pts, bool is_mark, bool gop_pos);
+    void packRtpStapA(const char *data, size_t len, uint64_t pts, bool is_mark, bool gop_pos);
 
 private:
     Frame::Ptr _sps;

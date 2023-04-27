@@ -30,21 +30,25 @@ API_EXPORT void API_CALL mk_http_downloader_release(mk_http_downloader ctx) {
 }
 
 API_EXPORT void API_CALL mk_http_downloader_start(mk_http_downloader ctx, const char *url, const char *file, on_mk_download_complete cb, void *user_data) {
+    mk_http_downloader_start2(ctx, url, file, cb, user_data, nullptr);
+}
+
+API_EXPORT void API_CALL mk_http_downloader_start2(mk_http_downloader ctx, const char *url, const char *file, on_mk_download_complete cb, void *user_data, on_user_data_free user_data_free) {
     assert(ctx && url && file);
     HttpDownloader::Ptr *obj = (HttpDownloader::Ptr *) ctx;
-    (*obj)->setOnResult([cb, user_data](ErrCode code, const string &errMsg, const string &filePath) {
+    std::shared_ptr<void> ptr(user_data, user_data_free ? user_data_free : [](void *) {});
+    (*obj)->setOnResult([cb, ptr](const SockException &ex, const string &filePath) {
         if (cb) {
-            cb(user_data, code, errMsg.data(), filePath.data());
+            cb(ptr.get(), ex.getErrCode(), ex.what(), filePath.data());
         }
     });
     (*obj)->startDownload(url, file, false);
 }
 
-
 ///////////////////////////////////////////HttpRequester/////////////////////////////////////////////
 API_EXPORT mk_http_requester API_CALL mk_http_requester_create(){
     HttpRequester::Ptr *ret = new HttpRequester::Ptr(new HttpRequester);
-    return ret;
+    return (mk_http_requester)ret;
 }
 
 API_EXPORT void API_CALL mk_http_requester_clear(mk_http_requester ctx){
@@ -104,7 +108,7 @@ API_EXPORT void API_CALL mk_http_requester_add_header(mk_http_requester ctx,cons
 API_EXPORT const char* API_CALL mk_http_requester_get_response_status(mk_http_requester ctx){
     assert(ctx);
     HttpRequester::Ptr *obj = (HttpRequester::Ptr *)ctx;
-    return (*obj)->responseStatus().c_str();
+    return (*obj)->response().Url().c_str();
 }
 
 API_EXPORT const char* API_CALL mk_http_requester_get_response_header(mk_http_requester ctx,const char *key){
@@ -128,17 +132,23 @@ API_EXPORT mk_parser API_CALL mk_http_requester_get_response(mk_http_requester c
     return (mk_parser)&((*obj)->response());
 }
 
-API_EXPORT void API_CALL mk_http_requester_set_cb(mk_http_requester ctx,on_mk_http_requester_complete cb, void *user_data){
+API_EXPORT void API_CALL mk_http_requester_set_cb(mk_http_requester ctx,on_mk_http_requester_complete cb, void *user_data) {
+    mk_http_requester_set_cb2(ctx, cb, user_data, nullptr);
+}
+
+API_EXPORT void API_CALL mk_http_requester_set_cb2(mk_http_requester ctx,on_mk_http_requester_complete cb, void *user_data, on_user_data_free user_data_free) {
     assert(ctx && cb);
     HttpRequester::Ptr *obj = (HttpRequester::Ptr *)ctx;
-    (*obj)->setOnResult([cb,user_data](const SockException &ex,const string &status,const StrCaseMap &header,const string &strRecvBody){
-        cb(user_data, ex.getErrCode(),ex.what());
+    std::shared_ptr<void> ptr(user_data, user_data_free ? user_data_free : [](void *) {});
+    (*obj)->setOnResult([cb, ptr](const SockException &ex, const Parser &res) {
+        cb(ptr.get(), ex.getErrCode(), ex.what());
     });
 }
 
 API_EXPORT void API_CALL mk_http_requester_start(mk_http_requester ctx,const char *url, float timeout_second){
     assert(ctx && url && url[0] && timeout_second > 0);
     HttpRequester::Ptr *obj = (HttpRequester::Ptr *)ctx;
-    (*obj)->sendRequest(url,timeout_second);
+    (*obj)->setCompleteTimeout(timeout_second * 1000);
+    (*obj)->sendRequest(url);
 }
 

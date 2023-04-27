@@ -125,17 +125,20 @@ int main(int argc, char *argv[]) {
 
         //设置合并写
         mINI::Instance()[General::kMergeWriteMS] = merge_ms;
-        mINI::Instance()[General::kRtspDemand] = demand;
-        mINI::Instance()[General::kRtmpDemand] = demand;
-        mINI::Instance()[General::kHlsDemand] = demand;
-        mINI::Instance()[General::kTSDemand] = demand;
-        mINI::Instance()[General::kFMP4Demand] = demand;
+        mINI::Instance()[Protocol::kRtspDemand] = demand;
+        mINI::Instance()[Protocol::kRtmpDemand] = demand;
+        mINI::Instance()[Protocol::kHlsDemand] = demand;
+        mINI::Instance()[Protocol::kTSDemand] = demand;
+        mINI::Instance()[Protocol::kFMP4Demand] = demand;
 
         map<string, PlayerProxy::Ptr> proxyMap;
+        ProtocolOption option;
+        option.enable_hls = false;
+        option.enable_mp4 = false;
         for (auto i = 0; i < proxy_count; ++i) {
             auto stream = to_string(i);
-            PlayerProxy::Ptr player(new PlayerProxy(DEFAULT_VHOST, "live", stream, false, false));
-            (*player)[kRtpType] = rtp_type;
+            PlayerProxy::Ptr player(new PlayerProxy(DEFAULT_VHOST, "live", stream, option));
+            (*player)[Client::kRtpType] = rtp_type;
             player->play(in_url);
             proxyMap.emplace(stream, player);
             //休眠后再启动下一个拉流代理，防止短时间海量链接

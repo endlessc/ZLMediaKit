@@ -11,14 +11,9 @@
 #ifndef HLSMAKER_H
 #define HLSMAKER_H
 
+#include <string>
 #include <deque>
 #include <tuple>
-#include "Common/config.h"
-#include "Util/TimeTicker.h"
-#include "Util/File.h"
-#include "Util/util.h"
-#include "Util/logger.h"
-using namespace toolkit;
 
 namespace mediakit {
 
@@ -27,8 +22,9 @@ public:
     /**
      * @param seg_duration 切片文件长度
      * @param seg_number 切片个数
+     * @param seg_keep 是否保留切片文件
      */
-    HlsMaker(float seg_duration = 5, uint32_t seg_number = 3);
+    HlsMaker(float seg_duration = 5, uint32_t seg_number = 3, bool seg_keep = false);
     virtual ~HlsMaker();
 
     /**
@@ -38,12 +34,17 @@ public:
      * @param timestamp 毫秒时间戳
      * @param is_idr_fast_packet 是否为关键帧第一个包
      */
-    void inputData(void *data, size_t len, uint32_t timestamp, bool is_idr_fast_packet);
+    void inputData(void *data, size_t len, uint64_t timestamp, bool is_idr_fast_packet);
 
     /**
      * 是否为直播
      */
     bool isLive();
+
+    /**
+     * 是否保留切片文件
+     */
+    bool isKeep();
 
     /**
      * 清空记录
@@ -56,7 +57,7 @@ protected:
      * @param index
      * @return
      */
-    virtual string onOpenSegment(uint64_t index) = 0;
+    virtual std::string onOpenSegment(uint64_t index) = 0;
 
     /**
      * 删除ts切片文件回调
@@ -73,16 +74,14 @@ protected:
 
     /**
      * 写m3u8文件回调
-     * @param data
-     * @param len
      */
-    virtual void onWriteHls(const char *data, size_t len) = 0;
+    virtual void onWriteHls(const std::string &data) = 0;
 
     /**
      * 上一个 ts 切片写入完成, 可在这里进行通知处理
      * @param duration_ms 上一个 ts 切片的时长, 单位为毫秒
      */
-    virtual void onFlushLastSegment(uint32_t duration_ms) {};
+    virtual void onFlushLastSegment(uint64_t duration_ms) {};
 
     /**
      * 关闭上个ts切片并且写入m3u8索引
@@ -106,16 +105,17 @@ private:
      * 添加新的ts切片
      * @param timestamp
      */
-    void addNewSegment(uint32_t timestamp);
+    void addNewSegment(uint64_t timestamp);
 
 private:
     float _seg_duration = 0;
     uint32_t _seg_number = 0;
-    uint32_t _last_timestamp = 0;
-    uint32_t _last_seg_timestamp = 0;
+    bool _seg_keep = false;
+    uint64_t _last_timestamp = 0;
+    uint64_t _last_seg_timestamp = 0;
     uint64_t _file_index = 0;
-    string _last_file_name;
-    std::deque<tuple<int,string> > _seg_dur_list;
+    std::string _last_file_name;
+    std::deque<std::tuple<int,std::string> > _seg_dur_list;
 };
 
 }//namespace mediakit

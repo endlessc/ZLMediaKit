@@ -18,16 +18,24 @@
           </video>
         </div>
 
-        <div>
+        <div style="float: left; width:30%;">
+          <span>已存在的流列表，点击自动播放:</span>
+          <ol id="olstreamlist">
+            <li>初始演示</li>
+            <li>每秒自动刷新</li>
+          </ol>
+        </div>
+
+        <div style="float: right; width: 70%">
 
             <p>
                 <label for="streamUrl">url:</label>
-                <input type="text" style="co" id='streamUrl' value="http://127.0.0.1/index/api/webrtc?app=live&stream=test&type=play">
+                <input type="text" style="co; width:70%" id='streamUrl' value="http://192.168.1.101/index/api/webrtc?app=live&stream=xiong&type=play">
             </p>
 
             <p>
               <label for="simulcast">simulcast:</label>
-              <input type="checkbox" id='simulcast' checked="checked">
+              <input type="checkbox" id='simulcast'>
             </p>
             <p>
               <label for="useCamera">useCamera:</label>
@@ -46,20 +54,36 @@
             </p>
 
             <p>
-              <label for="method">method(play or push):</label>
+              <label for="method">method(play or push or echo):</label>
+              <input type="radio" name="method" value="echo" >echo
               <input type="radio" name="method" value="push" >push
               <input type="radio" name="method" value="play" checked = true>play
             </p>
-
             <p>
               <label for="resolution">resolution:</label>
               <select id="resolution">
-
               </select>
             </p>
+            <p>
+              <label for="datachannel">datachannel:</label>
+              <input id='datachannel' name="datachannel" type="checkbox" value="0">
+            </p>
+            <button onclick="start()">开始(start)</button>
+            <button onclick="stop()">停止(stop)</button>
 
-            <button onclick="start()">开始</button>
-            <button onclick="stop()">停止</button>
+            <p>
+              <label for="msgsend">msgsend:</label>
+              <input type="text" id='msgsend' value="hello word !">
+            </p>
+            <p>
+              <label for="msgrecv">msgrecv:</label>
+              <input type="text" id='msgrecv' disabled>
+            </p>
+            <button onclick="send()">发送(send by datachannel)</button>
+            <button onclick="close()">关闭(close datachannel)</button>
+            
+
+           
             
         </div>
     </div>
@@ -69,19 +93,30 @@
       var recvOnly = true
       var resArr = []
 
+      var ishttps = 'https:' == document.location.protocol ? true : false
+      var isLocal = "file:" == document.location.protocol ? true : false
+      var url = document.location.protocol+"//"+window.location.host+"/index/api/webrtc?app=live&stream=test&type=play"
+      
+
+      if(!ishttps && !isLocal){
+        alert('本demo需要在https的网站访问 ,如果你要推流的话(this demo must access in site of https if you want push stream)')
+      }
+
+      if(isLocal){
+        url = "http://127.0.0.1"+"/index/api/webrtc?app=live&stream=test&type=play"
+      }
+      document.getElementById('streamUrl').value = url
       document.getElementsByName("method").forEach((el,idx)=>{
         el.onclick=function(e){
-          if(el.value == "play")
-          {
-            let url = document.getElementById('streamUrl').value;
-            
-            document.getElementById('streamUrl').value = url.replace("&type=push","&type=play");
+          let url = new URL(document.getElementById('streamUrl').value);
+          url.searchParams.set("type",el.value)
+          document.getElementById('streamUrl').value = url.toString()
+          
+          if(el.value == "play"){
             recvOnly = true;
-          }
-          else
-          {
-            let url = document.getElementById('streamUrl').value;
-            document.getElementById('streamUrl').value = url.replace("&type=play","&type=push");
+          }else if(el.value == "echo"){ 
+            recvOnly = false;
+          }else{
             recvOnly = false;
           }
         };
@@ -113,7 +148,8 @@
                     audioEnable:document.getElementById('audioEnable').checked,
                     videoEnable:document.getElementById('videoEnable').checked,
                     recvOnly:recvOnly,
-                    resolution:{w:w,h:h}
+                    resolution:{w:w,h:h},
+                    usedatachannel:document.getElementById('datachannel').checked,
                 }
             );
     
@@ -127,9 +163,9 @@
                 console.log('播放成功',e.streams)
             });
     
-            player.on(ZLMRTCClient.Events.WEBRTC_OFFER_ANSWER_EXCHANGE_FAILED,function(e)
-            {// offer answer 交换失败
-                console.log('offer answer 交换失败',e)
+            player.on(ZLMRTCClient.Events.WEBRTC_OFFER_ANWSER_EXCHANGE_FAILED,function(e)
+            {// offer anwser 交换失败
+                console.log('offer anwser 交换失败',e)
                 stop();
             });
     
@@ -139,13 +175,37 @@
               document.getElementById('selfVideo').srcObject=s;
               document.getElementById('selfVideo').muted = true;
               
-                //console.log('offer answer 交换失败',e)
+                //console.log('offer anwser 交换失败',e)
             });
 
             player.on(ZLMRTCClient.Events.CAPTURE_STREAM_FAILED,function(s)
             {// 获取本地流失败
     
               console.log('获取本地流失败')
+            });
+
+            player.on(ZLMRTCClient.Events.WEBRTC_ON_CONNECTION_STATE_CHANGE,function(state)
+            {// RTC 状态变化 ,详情参考 https://developer.mozilla.org/en-US/docs/Web/API/RTCPeerConnection/connectionState
+              console.log('当前状态==>',state)
+            });
+
+            player.on(ZLMRTCClient.Events.WEBRTC_ON_DATA_CHANNEL_OPEN,function(event)
+            {
+              console.log('rtc datachannel 打开 :',event)
+            });
+
+            player.on(ZLMRTCClient.Events.WEBRTC_ON_DATA_CHANNEL_MSG,function(event)
+            {
+              console.log('rtc datachannel 消息 :',event.data)
+              document.getElementById('msgrecv').value = event.data
+            });
+            player.on(ZLMRTCClient.Events.WEBRTC_ON_DATA_CHANNEL_ERR,function(event)
+            {
+              console.log('rtc datachannel 错误 :',event)
+            });
+            player.on(ZLMRTCClient.Events.WEBRTC_ON_DATA_CHANNEL_CLOSE,function(event)
+            {
+              console.log('rtc datachannel 关闭 :',event)
             });
       }
 
@@ -175,11 +235,88 @@
           {
             player.close();
             player = null;
+            var remote = document.getElementById('video');
+            if(remote)
+            {
+                remote.srcObject = null;
+                remote.load();
+            }
             var local = document.getElementById('selfVideo');
-            local.removeAttribute('srcObject');
+            local.srcObject = null;
             local.load();
           }
       }
+
+      function send(){
+        if(player){
+          //send msg refernece https://developer.mozilla.org/en-US/docs/Web/API/RTCDataChannel/send
+          player.sendMsg(document.getElementById('msgsend').value)
+        }
+      }
+
+      function close(){
+        if(player){
+          player.closeDataChannel()
+        }
+      }
+
+
+      function on_click_to_play(app, stream) {
+        console.log(`on_click_to_play: ${app}/${stream}`);
+        var url = `${document.location.protocol}//${window.location.host}/index/api/webrtc?app=${app}&stream=${stream}&type=play`;
+        document.getElementById('streamUrl').value = url;
+        start();
+      }
+      function clearStreamList() {
+        let content = document.getElementById("olstreamlist");
+          while (content.hasChildNodes()) {
+            content.removeChild(content.firstChild);
+          }
+      }
+      function fillStreamList(json) {
+          clearStreamList();
+          if (json.code != 0) {
+            return;
+          }
+          let ss = {};
+          for (let o of json.data) {
+            if (ss[o.app]) {
+              ss[o.app].add(o.stream);
+            } else {
+              let set = new Set();
+              set.add(o.steram);
+              ss[o.app] = set;
+            }
+          }
+
+          for (let o in ss) {
+            let app = o;
+            for (let s of ss[o]) {
+              if (s) {
+                //console.log(app, s);
+                let content = document.getElementById("olstreamlist");
+                let child = `<li app="${app}"  stream="${s}" onmouseover="this.style.color='blue';" onclick="on_click_to_play('${app}', '${s}')">${app}/${s}</li>`;
+                content.insertAdjacentHTML("beforeend", child);
+              }
+            }
+          }
+      }
+      async function getData(url) {
+        const response = await fetch(url, {
+            method: 'GET'
+        });
+        const data = await response.json();
+        //console.log(data);
+        return data;
+      }
+      function get_media_list() {
+        let url = document.location.protocol+"//"+window.location.host+"/index/api/getMediaList?secret=035c73f7-bb6b-4889-a715-d9eb2d1925cc";
+        let json = getData(url);
+        json.then((json)=> fillStreamList(json));
+      }
+      setInterval(() => {
+       get_media_list(); 
+      }, 1000);
 
     </script>
     

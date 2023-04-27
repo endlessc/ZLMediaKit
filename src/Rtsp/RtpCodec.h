@@ -12,34 +12,34 @@
 #define ZLMEDIAKIT_RTPCODEC_H
 
 #include <memory>
+#include "Extension/Frame.h"
 #include "Util/RingBuffer.h"
-#include "Player/PlayerBase.h"
-using namespace toolkit;
+#include "Rtsp/Rtsp.h"
 
-namespace mediakit{
+namespace mediakit {
 
-class RtpRing{
+class RtpRing {
 public:
-    typedef std::shared_ptr<RtpRing> Ptr;
-    typedef RingBuffer<RtpPacket::Ptr> RingType;
+    using Ptr = std::shared_ptr<RtpRing>;
+    using RingType = toolkit::RingBuffer<RtpPacket::Ptr>;
 
-    RtpRing(){}
-    virtual ~RtpRing(){}
+    RtpRing() = default;
+    virtual ~RtpRing() = default;
 
     /**
      * 获取rtp环形缓存
      * @return
      */
     virtual RingType::Ptr getRtpRing() const {
-        return _rtpRing;
+        return _ring;
     }
 
     /**
      * 设置rtp环形缓存
      * @param ring
      */
-    virtual void setRtpRing(const RingType::Ptr &ring){
-        _rtpRing = ring;
+    virtual void setRtpRing(const RingType::Ptr &ring) {
+        _ring = ring;
     }
 
     /**
@@ -48,17 +48,18 @@ public:
      * @param key_pos 是否为关键帧第一个rtp包
      * @return 是否为关键帧第一个rtp包
      */
-    virtual bool inputRtp(const RtpPacket::Ptr &rtp, bool key_pos){
-        if(_rtpRing){
-            _rtpRing->write(rtp,key_pos);
+    virtual bool inputRtp(const RtpPacket::Ptr &rtp, bool key_pos) {
+        if (_ring) {
+            _ring->write(rtp, key_pos);
         }
         return key_pos;
     }
+
 protected:
-    RingType::Ptr _rtpRing;
+    RingType::Ptr _ring;
 };
 
-class RtpInfo{
+class RtpInfo {
 public:
     using Ptr = std::shared_ptr<RtpInfo>;
 
@@ -73,7 +74,7 @@ public:
         _interleaved = interleaved;
     }
 
-    virtual ~RtpInfo() {}
+    virtual ~RtpInfo() = default;
 
     //返回rtp负载最大长度
     size_t getMaxSize() const {
@@ -84,7 +85,7 @@ public:
         return _ssrc;
     }
 
-    RtpPacket::Ptr makeRtp(TrackType type,const void *data, size_t len, bool mark, uint32_t stamp);
+    RtpPacket::Ptr makeRtp(TrackType type,const void *data, size_t len, bool mark, uint64_t stamp);
 
 private:
     uint8_t _pt;
@@ -95,11 +96,12 @@ private:
     size_t _mtu_size;
 };
 
-class RtpCodec : public RtpRing, public FrameDispatcher , public CodecInfo{
+class RtpCodec : public RtpRing, public FrameDispatcher, public CodecInfo {
 public:
-    typedef std::shared_ptr<RtpCodec> Ptr;
-    RtpCodec(){}
-    virtual ~RtpCodec(){}
+    using Ptr = std::shared_ptr<RtpCodec>;
+
+    RtpCodec() = default;
+    ~RtpCodec() override = default;
 };
 
 }//namespace mediakit

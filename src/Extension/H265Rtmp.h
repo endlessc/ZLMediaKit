@@ -13,9 +13,7 @@
 
 #include "Rtmp/RtmpCodec.h"
 #include "Extension/Track.h"
-#include "Util/ResourcePool.h"
 #include "Extension/H265.h"
-using namespace toolkit;
 
 namespace mediakit{
 /**
@@ -24,7 +22,7 @@ namespace mediakit{
  */
 class H265RtmpDecoder : public RtmpCodec {
 public:
-    typedef std::shared_ptr<H265RtmpDecoder> Ptr;
+    using Ptr = std::shared_ptr<H265RtmpDecoder>;
 
     H265RtmpDecoder();
     ~H265RtmpDecoder() {}
@@ -52,7 +50,7 @@ protected:
  */
 class H265RtmpEncoder : public H265RtmpDecoder{
 public:
-    typedef std::shared_ptr<H265RtmpEncoder> Ptr;
+    using Ptr = std::shared_ptr<H265RtmpEncoder>;
 
     /**
      * 构造函数，track可以为空，此时则在inputFrame时输入sps pps
@@ -61,13 +59,18 @@ public:
      * @param track
      */
     H265RtmpEncoder(const Track::Ptr &track);
-    ~H265RtmpEncoder() {}
+    ~H265RtmpEncoder() = default;
 
     /**
      * 输入265帧，可以不带sps pps
      * @param frame 帧数据
      */
-    void inputFrame(const Frame::Ptr &frame) override;
+    bool inputFrame(const Frame::Ptr &frame) override;
+
+    /**
+     * 刷新输出所有frame缓存
+     */
+    void flush() override;
 
     /**
      * 生成config包
@@ -78,13 +81,13 @@ private:
     void makeVideoConfigPkt();
 
 private:
-    bool _has_vcl = false;
     bool _got_config_frame = false;
-    string _vps;
-    string _sps;
-    string _pps;
+    std::string _vps;
+    std::string _sps;
+    std::string _pps;
     H265Track::Ptr _track;
     RtmpPacket::Ptr _rtmp_packet;
+    FrameMerger _merger{FrameMerger::mp4_nal_size};
 };
 
 }//namespace mediakit

@@ -15,14 +15,9 @@
 #include <string>
 #include <memory>
 #include <unordered_map>
-#include "Util/util.h"
-#include "Common/config.h"
 #include "Common/macros.h"
 #include "Extension/Frame.h"
-
-using namespace std;
-using namespace toolkit;
-using namespace mediakit;
+#include "Network/Socket.h"
 
 namespace mediakit {
 
@@ -53,7 +48,7 @@ typedef enum {
     XX(DVI4_22050, TrackAudio, 17, 22050, 1, CodecInvalid) \
     XX(G729, TrackAudio, 18, 8000, 1, CodecInvalid) \
     XX(CelB, TrackVideo, 25, 90000, 1, CodecInvalid) \
-    XX(JPEG, TrackVideo, 26, 90000, 1, CodecInvalid) \
+    XX(JPEG, TrackVideo, 26, 90000, 1, CodecJPEG) \
     XX(nv, TrackVideo, 28, 90000, 1, CodecInvalid) \
     XX(H261, TrackVideo, 31, 90000, 1, CodecInvalid) \
     XX(MPV, TrackVideo, 32, 90000, 1, CodecInvalid) \
@@ -127,9 +122,9 @@ public:
     //返回有效负载指针,跳过csrc、ext
     uint8_t* getPayloadData();
     //返回有效负载总长度,不包括csrc、ext、padding
-    size_t getPayloadSize(size_t rtp_size) const;
+    ssize_t getPayloadSize(size_t rtp_size) const;
     //打印调试信息
-    string dumpString(size_t rtp_size) const;
+    std::string dumpString(size_t rtp_size) const;
 
 private:
     //返回有效负载偏移量
@@ -143,7 +138,7 @@ private:
 #endif // defined(_WIN32)
 
 //此rtp为rtp over tcp形式，需要忽略前4个字节
-class RtpPacket : public BufferRaw{
+class RtpPacket : public toolkit::BufferRaw{
 public:
     using Ptr = std::shared_ptr<RtpPacket>;
     enum {
@@ -154,34 +149,39 @@ public:
 
     //获取rtp头
     RtpHeader* getHeader();
+    const RtpHeader* getHeader() const;
+
     //打印调试信息
-    string dumpString() const;
+    std::string dumpString() const;
 
     //主机字节序的seq
-    uint16_t getSeq();
+    uint16_t getSeq() const;
+    uint32_t getStamp() const;
     //主机字节序的时间戳，已经转换为毫秒
-    uint32_t getStampMS();
+    uint64_t getStampMS(bool ntp = true) const;
     //主机字节序的ssrc
-    uint32_t getSSRC();
+    uint32_t getSSRC() const;
     //有效负载，跳过csrc、ext
     uint8_t* getPayload();
     //有效负载长度，不包括csrc、ext、padding
-    size_t getPayloadSize();
+    size_t getPayloadSize() const;
 
     //音视频类型
     TrackType type;
     //音频为采样率，视频一般为90000
     uint32_t sample_rate;
+    //ntp时间戳
+    uint64_t ntp_stamp;
 
     static Ptr create();
 
 private:
-    friend class ResourcePool_l<RtpPacket>;
+    friend class toolkit::ResourcePool_l<RtpPacket>;
     RtpPacket() = default;
 
 private:
     //对象个数统计
-    ObjectStatistic<RtpPacket> _statistic;
+    toolkit::ObjectStatistic<RtpPacket> _statistic;
 };
 
 class RtpPayload {
@@ -200,35 +200,29 @@ private:
 class SdpTrack {
 public:
     using Ptr = std::shared_ptr<SdpTrack>;
-
-    string _m;
-    string _o;
-    string _s;
-    string _i;
-    string _c;
-    string _t;
-    string _b;
+    std::string _t;
+    std::string _b;
     uint16_t _port;
 
     float _duration = 0;
     float _start = 0;
     float _end = 0;
 
-    map<char, string> _other;
-    map<string, string> _attr;
+    std::map<char, std::string> _other;
+    std::multimap<std::string, std::string> _attr;
 
-    string toString() const;
-    string getName() const;
-    string getControlUrl(const string &base_url) const;
+    std::string toString(uint16_t port = 0) const;
+    std::string getName() const;
+    std::string getControlUrl(const std::string &base_url) const;
 
 public:
-    int _pt;
+    int _pt = 0xff;
     int _channel;
     int _samplerate;
     TrackType _type;
-    string _codec;
-    string _fmtp;
-    string _control;
+    std::string _codec;
+    std::string _fmtp;
+    std::string _control;
 
 public:
     bool _inited = false;
@@ -243,39 +237,18 @@ class SdpParser {
 public:
     using Ptr = std::shared_ptr<SdpParser>;
 
-    SdpParser() {}
-    SdpParser(const string &sdp) { load(sdp); }
-    ~SdpParser() {}
+    SdpParser() = default;
+    SdpParser(const std::string &sdp) { load(sdp); }
+    ~SdpParser() = default;
 
-    void load(const string &sdp);
+    void load(const std::string &sdp);
     bool available() const;
     SdpTrack::Ptr getTrack(TrackType type) const;
-    vector<SdpTrack::Ptr> getAvailableTrack() const;
-    string toString() const;
+    std::vector<SdpTrack::Ptr> getAvailableTrack() const;
+    std::string toString() const;
 
 private:
-    vector<SdpTrack::Ptr> _track_vec;
-};
-
-/**
- * 解析rtsp url的工具类
- */
-class RtspUrl{
-public:
-    bool _is_ssl;
-    uint16_t _port;
-    string _url;
-    string _user;
-    string _passwd;
-    string _host;
-
-public:
-    RtspUrl() = default;
-    ~RtspUrl() = default;
-    bool parse(const string &url);
-
-private:
-    bool setup(bool,const string &, const string &, const string &);
+    std::vector<SdpTrack::Ptr> _track_vec;
 };
 
 /**
@@ -295,13 +268,13 @@ public:
         _payload_type = payload_type;
     }
 
-    virtual ~Sdp(){}
+    virtual ~Sdp() = default;
 
     /**
      * 获取sdp字符串
      * @return
      */
-    virtual string getSdp() const  = 0;
+    virtual std::string getSdp() const  = 0;
 
     /**
      * 获取pt
@@ -329,7 +302,7 @@ private:
 */
 class TitleSdp : public Sdp{
 public:
-
+    using Ptr = std::shared_ptr<TitleSdp>;
     /**
      * 构造title类型sdp
      * @param dur_sec rtsp点播时长，0代表直播，单位秒
@@ -337,47 +310,35 @@ public:
      * @param version sdp版本
      */
     TitleSdp(float dur_sec = 0,
-             const map<string,string> &header = map<string,string>(),
-             int version = 0) : Sdp(0,0){
-        _printer << "v=" << version << "\r\n";
+             const std::map<std::string, std::string> &header = std::map<std::string, std::string>(),
+             int version = 0);
 
-        if(!header.empty()){
-            for (auto &pr : header){
-                _printer << pr.first << "=" << pr.second << "\r\n";
-            }
-        } else {
-            _printer << "o=- 0 0 IN IP4 0.0.0.0\r\n";
-            _printer << "s=Streamed by " << SERVER_NAME << "\r\n";
-            _printer << "c=IN IP4 0.0.0.0\r\n";
-            _printer << "t=0 0\r\n";
-        }
-
-        if(dur_sec <= 0){
-            //直播
-            _printer << "a=range:npt=now-\r\n";
-        }else{
-            //点播
-            _printer << "a=range:npt=0-" << dur_sec  << "\r\n";
-        }
-        _printer << "a=control:*\r\n";
-    }
-    string getSdp() const override {
+    std::string getSdp() const override {
         return _printer;
     }
 
-    CodecId getCodecId() const override{
+    CodecId getCodecId() const override {
         return CodecInvalid;
     }
+
+    float getDuration() const {
+        return _dur_sec;
+    }
+
 private:
-    _StrPrinter _printer;
+    float _dur_sec = 0;
+    toolkit::_StrPrinter _printer;
 };
 
 //创建rtp over tcp4个字节的头
-Buffer::Ptr makeRtpOverTcpPrefix(uint16_t size, uint8_t interleaved);
+toolkit::Buffer::Ptr makeRtpOverTcpPrefix(uint16_t size, uint8_t interleaved);
 //创建rtp-rtcp端口对
-void makeSockPair(std::pair<Socket::Ptr, Socket::Ptr> &pair, const string &local_ip);
+void makeSockPair(std::pair<toolkit::Socket::Ptr, toolkit::Socket::Ptr> &pair, const std::string &local_ip, bool re_use_port = false, bool is_udp = true);
 //十六进制方式打印ssrc
-string printSSRC(uint32_t ui32Ssrc);
+std::string printSSRC(uint32_t ui32Ssrc);
+
+bool isRtp(const char *buf, size_t size);
+bool isRtcp(const char *buf,  size_t size);
 
 } //namespace mediakit
 #endif //RTSP_RTSP_H_

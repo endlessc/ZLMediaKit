@@ -17,30 +17,31 @@
 #include "Common/macros.h"
 #include "Rtsp/Rtsp.h"
 
-using namespace std;
-using namespace mediakit;
+namespace mediakit {
+
+#define RTP_EXT_MAP(XX) \
+    XX(ssrc_audio_level,            "urn:ietf:params:rtp-hdrext:ssrc-audio-level") \
+    XX(abs_send_time,               "http://www.webrtc.org/experiments/rtp-hdrext/abs-send-time") \
+    XX(transport_cc,                "http://www.ietf.org/id/draft-holmer-rmcat-transport-wide-cc-extensions-01") \
+    XX(sdes_mid,                    "urn:ietf:params:rtp-hdrext:sdes:mid") \
+    XX(sdes_rtp_stream_id,          "urn:ietf:params:rtp-hdrext:sdes:rtp-stream-id") \
+    XX(sdes_repaired_rtp_stream_id, "urn:ietf:params:rtp-hdrext:sdes:repaired-rtp-stream-id") \
+    XX(video_timing,                "http://www.webrtc.org/experiments/rtp-hdrext/video-timing") \
+    XX(color_space,                 "http://www.webrtc.org/experiments/rtp-hdrext/color-space") \
+    XX(csrc_audio_level,            "urn:ietf:params:rtp-hdrext:csrc-audio-level") \
+    XX(framemarking,                "http://tools.ietf.org/html/draft-ietf-avtext-framemarking-07") \
+    XX(video_content_type,          "http://www.webrtc.org/experiments/rtp-hdrext/video-content-type") \
+    XX(playout_delay,               "http://www.webrtc.org/experiments/rtp-hdrext/playout-delay") \
+    XX(video_orientation,           "urn:3gpp:video-orientation") \
+    XX(toffset,                     "urn:ietf:params:rtp-hdrext:toffset") \
+    XX(encrypt,                     "urn:ietf:params:rtp-hdrext:encrypt")
 
 enum class RtpExtType : uint8_t {
     padding = 0,
-    ssrc_audio_level = 1,
-    abs_send_time = 2,
-    transport_cc = 3,
-    sdes_mid = 4,
-    sdes_rtp_stream_id = 5,
-    sdes_repaired_rtp_stream_id = 6,
-    video_timing = 7,
-    color_space = 8,
-    //for firefox
-    csrc_audio_level = 9,
-    //svc ?
-    framemarking = 10,
-    video_content_type = 11,
-    playout_delay = 12,
-    video_orientation = 13,
-    toffset = 14,
-    reserved = 15,
-    // e2e ?
-    encrypt = reserved
+#define XX(type, uri) type,
+    RTP_EXT_MAP(XX)
+#undef XX
+    reserved = encrypt,
 };
 
 class RtcMedia;
@@ -49,25 +50,25 @@ class RtcMedia;
 class RtpExt {
 public:
     template<typename Type>
-    friend void appendExt(map<uint8_t, RtpExt> &ret, uint8_t *ptr, const uint8_t *end);
-
+    friend void appendExt(std::map<uint8_t, RtpExt> &ret, uint8_t *ptr, const uint8_t *end);
+    friend class RtpExtContext;
     ~RtpExt() = default;
 
-    static map<uint8_t/*id*/, RtpExt/*data*/> getExtValue(const RtpHeader *header);
-    static RtpExtType getExtType(const string &url);
-    static const string& getExtUrl(RtpExtType type);
+    static std::map<uint8_t/*id*/, RtpExt/*data*/> getExtValue(const RtpHeader *header);
+    static RtpExtType getExtType(const std::string &url);
+    static const std::string& getExtUrl(RtpExtType type);
     static const char *getExtName(RtpExtType type);
 
     void setType(RtpExtType type);
     RtpExtType getType() const;
-    string dumpString() const;
+    std::string dumpString() const;
 
     uint8_t getAudioLevel(bool *vad) const;
     uint32_t getAbsSendTime() const;
     uint16_t getTransportCCSeq() const;
-    string getSdesMid() const;
-    string getRtpStreamId() const;
-    string getRepairedRtpStreamId() const;
+    std::string getSdesMid() const;
+    std::string getRtpStreamId() const;
+    std::string getRepairedRtpStreamId() const;
 
     void getVideoTiming(uint8_t &flags,
                         uint16_t &encode_start,
@@ -92,12 +93,14 @@ public:
 
     void setExtId(uint8_t ext_id);
     void clearExt();
+    operator bool () const;
 
 private:
+    RtpExt() = default;
     RtpExt(void *ptr, bool one_byte_ext, const char *str, size_t size);
     const char *data() const;
     size_t size() const;
-    const char& operator[](size_t pos) const;
+    const uint8_t& operator[](size_t pos) const;
     operator std::string() const;
 
 private:
@@ -112,27 +115,28 @@ class RtcMedia;
 class RtpExtContext {
 public:
     using Ptr = std::shared_ptr<RtpExtContext>;
-    using OnGetRtp = function<void(uint8_t pt, uint32_t ssrc, const string &rid)>;
+    using OnGetRtp = std::function<void(uint8_t pt, uint32_t ssrc, const std::string &rid)>;
 
     RtpExtContext(const RtcMedia &media);
     ~RtpExtContext() = default;
 
     void setOnGetRtp(OnGetRtp cb);
-    string getRid(uint32_t ssrc) const;
-    void setRid(uint32_t ssrc, const string &rid);
-    void changeRtpExtId(const RtpHeader *header, bool is_recv, string *rid_ptr = nullptr);
+    std::string getRid(uint32_t ssrc) const;
+    void setRid(uint32_t ssrc, const std::string &rid);
+    RtpExt changeRtpExtId(const RtpHeader *header, bool is_recv, std::string *rid_ptr = nullptr, RtpExtType type = RtpExtType::padding);
 
 private:
-    void onGetRtp(uint8_t pt, uint32_t ssrc, const string &rid);
+    void onGetRtp(uint8_t pt, uint32_t ssrc, const std::string &rid);
 
 private:
     OnGetRtp _cb;
     //发送rtp时需要修改rtp ext id
-    map<RtpExtType, uint8_t> _rtp_ext_type_to_id;
+    std::map<RtpExtType, uint8_t> _rtp_ext_type_to_id;
     //接收rtp时需要修改rtp ext id
-    unordered_map<uint8_t, RtpExtType> _rtp_ext_id_to_type;
+    std::unordered_map<uint8_t, RtpExtType> _rtp_ext_id_to_type;
     //ssrc --> rid
-    unordered_map<uint32_t/*simulcast ssrc*/, string/*rid*/> _ssrc_to_rid;
+    std::unordered_map<uint32_t/*simulcast ssrc*/, std::string/*rid*/> _ssrc_to_rid;
 };
 
+} //namespace mediakit
 #endif //ZLMEDIAKIT_RTPEXT_H

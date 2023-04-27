@@ -21,7 +21,7 @@ namespace mediakit{
  */
 class AACRtmpDecoder : public RtmpCodec{
 public:
-    typedef std::shared_ptr<AACRtmpDecoder> Ptr;
+    using Ptr = std::shared_ptr<AACRtmpDecoder>;
 
     AACRtmpDecoder() {}
     ~AACRtmpDecoder() {}
@@ -40,7 +40,7 @@ private:
     void onGetAAC(const char *data, size_t len, uint32_t stamp);
 
 private:
-    string _aac_cfg;
+    std::string _aac_cfg;
 };
 
 
@@ -49,7 +49,7 @@ private:
  */
 class AACRtmpEncoder : public AACRtmpDecoder{
 public:
-    typedef std::shared_ptr<AACRtmpEncoder> Ptr;
+    using Ptr = std::shared_ptr<AACRtmpEncoder>;
 
     /**
      * 构造函数，track可以为空，此时则在inputFrame时输入adts头
@@ -64,7 +64,7 @@ public:
      * 输入aac 数据，可以不带adts头
      * @param frame aac数据
      */
-    void inputFrame(const Frame::Ptr &frame) override;
+    bool inputFrame(const Frame::Ptr &frame) override;
 
     /**
      * 生成config包
@@ -77,7 +77,7 @@ private:
 private:
     uint8_t _audio_flv_flags;
     AACTrack::Ptr _track;
-    string _aac_cfg;
+    std::string _aac_cfg;
 };
 
 }//namespace mediakit

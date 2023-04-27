@@ -14,10 +14,6 @@
 #ifdef ENABLE_MP4
 
 #include "Common/MediaSink.h"
-#include "Extension/AAC.h"
-#include "Extension/G711.h"
-#include "Extension/H264.h"
-#include "Extension/H265.h"
 #include "Common/Stamp.h"
 #include "MP4.h"
 
@@ -31,17 +27,22 @@ public:
     /**
      * 添加已经ready状态的track
      */
-    void addTrack(const Track::Ptr &track) override;
+    bool addTrack(const Track::Ptr &track) override;
 
     /**
      * 输入帧
      */
-    void inputFrame(const Frame::Ptr &frame) override;
+    bool inputFrame(const Frame::Ptr &frame) override;
 
     /**
      * 重置所有track
      */
     void resetTracks() override;
+
+    /**
+     * 刷新输出所有frame缓存
+     */
+    void flush() override;
 
     /**
      * 是否包含视频
@@ -58,6 +59,11 @@ public:
      */
     void initSegment();
 
+    /**
+     * 获取mp4时长,单位毫秒
+     */
+    uint64_t getDuration() const;
+
 protected:
     virtual MP4FileIO::Writer createWriter() = 0;
 
@@ -72,15 +78,15 @@ private:
         int track_id = -1;
         Stamp stamp;
     };
-    unordered_map<int, track_info> _codec_to_trackid;
-    FrameMerger _frame_merger{FrameMerger::mp4_nal_size};
+    std::unordered_map<int, track_info> _codec_to_trackid;
+    FrameMerger _frame_merger { FrameMerger::mp4_nal_size };
 };
 
 class MP4Muxer : public MP4MuxerInterface{
 public:
-    typedef std::shared_ptr<MP4Muxer> Ptr;
+    using Ptr = std::shared_ptr<MP4Muxer>;
 
-    MP4Muxer();
+    MP4Muxer() = default;
     ~MP4Muxer() override;
 
     /**
@@ -92,7 +98,7 @@ public:
      * 打开mp4
      * @param file 文件完整路径
      */
-    void openMP4(const string &file);
+    void openMP4(const std::string &file);
 
     /**
      * 手动关闭文件(对象析构时会自动关闭)
@@ -103,7 +109,7 @@ protected:
     MP4FileIO::Writer createWriter() override;
 
 private:
-    string _file_name;
+    std::string _file_name;
     MP4FileDisk::Ptr _mp4_file;
 };
 
@@ -120,29 +126,28 @@ public:
     /**
      * 输入帧
      */
-    void inputFrame(const Frame::Ptr &frame) override;
+    bool inputFrame(const Frame::Ptr &frame) override;
 
     /**
      * 获取fmp4 init segment
      */
-    const string &getInitSegment();
+    const std::string &getInitSegment();
 
 protected:
     /**
      * 输出fmp4切片回调函数
-     * @param string 切片内容
+     * @param std::string 切片内容
      * @param stamp 切片末尾时间戳
      * @param key_frame 是否有关键帧
      */
-    virtual void onSegmentData(const string &string, uint32_t stamp, bool key_frame) = 0;
+    virtual void onSegmentData(std::string string, uint64_t stamp, bool key_frame) = 0;
 
 protected:
     MP4FileIO::Writer createWriter() override;
 
 private:
     bool _key_frame = false;
-    Ticker _ticker;
-    string _init_segment;
+    std::string _init_segment;
     MP4FileMemory::Ptr _memory_file;
 };
 

@@ -13,29 +13,21 @@
 
 #include <mutex>
 #include <memory>
-#include "Player/PlayerBase.h"
-#include "Util/util.h"
-#include "Util/logger.h"
-#include "Util/TimeTicker.h"
-#include "Util/TimeTicker.h"
 #include "Common/MediaSink.h"
+#include "Record/Recorder.h"
 #include "MP4Muxer.h"
-
-using namespace toolkit;
 
 namespace mediakit {
 
 #ifdef ENABLE_MP4
-class MP4Recorder : public MediaSinkInterface{
-public:
-    typedef std::shared_ptr<MP4Recorder> Ptr;
+class MP4Muxer;
 
-    MP4Recorder(const string &strPath,
-                const string &strVhost,
-                const string &strApp,
-                const string &strStreamId,
-                size_t max_second);
-    virtual ~MP4Recorder();
+class MP4Recorder final : public MediaSinkInterface {
+public:
+    using Ptr = std::shared_ptr<MP4Recorder>;
+
+    MP4Recorder(const std::string &path, const std::string &vhost, const std::string &app, const std::string &stream_id, size_t max_second);
+    ~MP4Recorder() override;
 
     /**
      * 重置所有Track
@@ -45,26 +37,33 @@ public:
     /**
      * 输入frame
      */
-    void inputFrame(const Frame::Ptr &frame) override;
+    bool inputFrame(const Frame::Ptr &frame) override;
+
+    /**
+     * 刷新输出所有frame缓存
+     */
+    void flush() override;
 
     /**
      * 添加ready状态的track
      */
-    void addTrack(const Track::Ptr & track) override;
+    bool addTrack(const Track::Ptr & track) override;
+
 private:
     void createFile();
     void closeFile();
     void asyncClose();
+
 private:
-    bool _haveVideo = false;
+    bool _have_video = false;
     size_t _max_second;
-    string _strPath;
-    string _strFile;
-    string _strFileTmp;
-    Ticker _createFileTicker;
+    std::string _folder_path;
+    std::string _full_path;
+    std::string _full_path_tmp;
     RecordInfo _info;
     MP4Muxer::Ptr _muxer;
-    list<Track::Ptr> _tracks;
+    std::list<Track::Ptr> _tracks;
+    uint64_t _last_dts = 0;
 };
 
 #endif ///ENABLE_MP4
