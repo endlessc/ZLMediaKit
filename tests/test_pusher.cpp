@@ -1,9 +1,9 @@
 ﻿/*
- * Copyright (c) 2016 The ZLMediaKit project authors. All Rights Reserved.
+ * Copyright (c) 2016-present The ZLMediaKit project authors. All Rights Reserved.
  *
- * This file is part of ZLMediaKit(https://github.com/xia-chu/ZLMediaKit).
+ * This file is part of ZLMediaKit(https://github.com/ZLMediaKit/ZLMediaKit).
  *
- * Use of this source code is governed by MIT license that can be found in the
+ * Use of this source code is governed by MIT-like license that can be found in the
  * LICENSE file in the root of the source tree. All contributing project authors
  * may be found in the AUTHORS file in the root of the source tree.
  */
@@ -88,8 +88,9 @@ int domain(const string &playUrl, const string &pushUrl) {
     NoticeCenter::Instance().addListener(nullptr, Broadcast::kBroadcastMediaChanged,
                                          [pushUrl,poller](BroadcastMediaChangedArgs) {
                                              //媒体源"app/stream"已经注册，这时方可新建一个RtmpPusher对象并绑定该媒体源
-                                             if(bRegist && pushUrl.find(sender.getSchema()) == 0){
-                                                 createPusher(poller,sender.getSchema(),sender.getVhost(),sender.getApp(), sender.getId(), pushUrl);
+                                             if (bRegist && pushUrl.find(sender.getSchema()) == 0) {
+                                                 auto tuple = sender.getMediaTuple();
+                                                 createPusher(poller, sender.getSchema(), tuple.vhost, tuple.app, tuple.stream, pushUrl);
                                              }
                                          });
 

@@ -1,9 +1,9 @@
 ﻿/*
- * Copyright (c) 2016 The ZLMediaKit project authors. All Rights Reserved.
+ * Copyright (c) 2016-present The ZLMediaKit project authors. All Rights Reserved.
  *
- * This file is part of ZLMediaKit(https://github.com/xia-chu/ZLMediaKit).
+ * This file is part of ZLMediaKit(https://github.com/ZLMediaKit/ZLMediaKit).
  *
- * Use of this source code is governed by MIT license that can be found in the
+ * Use of this source code is governed by MIT-like license that can be found in the
  * LICENSE file in the root of the source tree. All contributing project authors
  * may be found in the AUTHORS file in the root of the source tree.
  */
@@ -11,18 +11,16 @@
 #ifndef ZLMEDIAKIT_MP4MUXER_H
 #define ZLMEDIAKIT_MP4MUXER_H
 
-#ifdef ENABLE_MP4
+#if defined(ENABLE_MP4)
 
 #include "Common/MediaSink.h"
 #include "Common/Stamp.h"
 #include "MP4.h"
 
-namespace mediakit{
+namespace mediakit {
 
 class MP4MuxerInterface : public MediaSinkInterface {
 public:
-    MP4MuxerInterface() = default;
-    ~MP4MuxerInterface() override = default;
 
     /**
      * 添加已经ready状态的track
@@ -74,21 +72,24 @@ private:
     bool _started = false;
     bool _have_video = false;
     MP4FileIO::Writer _mov_writter;
-    struct track_info {
+
+    class FrameMergerImp : public FrameMerger {
+    public:
+        FrameMergerImp() : FrameMerger(FrameMerger::mp4_nal_size) {}
+    };
+
+    struct MP4Track {
         int track_id = -1;
         Stamp stamp;
+        FrameMergerImp merger;
     };
-    std::unordered_map<int, track_info> _codec_to_trackid;
-    FrameMerger _frame_merger { FrameMerger::mp4_nal_size };
+    std::unordered_map<int, MP4Track> _tracks;
 };
 
 class MP4Muxer : public MP4MuxerInterface{
 public:
     using Ptr = std::shared_ptr<MP4Muxer>;
-
-    MP4Muxer() = default;
     ~MP4Muxer() override;
-
     /**
      * 重置所有track
      */
@@ -116,7 +117,6 @@ private:
 class MP4MuxerMemory : public MP4MuxerInterface{
 public:
     MP4MuxerMemory();
-    ~MP4MuxerMemory() override = default;
 
     /**
      * 重置所有track
@@ -147,11 +147,36 @@ protected:
 
 private:
     bool _key_frame = false;
+    uint64_t _last_dst = 0;
     std::string _init_segment;
     MP4FileMemory::Ptr _memory_file;
 };
 
+} // namespace mediakit
 
-}//namespace mediakit
-#endif//#ifdef ENABLE_MP4
+#else
+
+#include "Common/MediaSink.h"
+
+namespace mediakit {
+
+class MP4MuxerMemory : public MediaSinkInterface {
+public:
+    bool addTrack(const Track::Ptr & track) override { return false; }
+    bool inputFrame(const Frame::Ptr &frame) override { return false; }
+    const std::string &getInitSegment() { static std::string kNull; return kNull; };
+
+protected:
+    /**
+     * 输出fmp4切片回调函数
+     * @param std::string 切片内容
+     * @param stamp 切片末尾时间戳
+     * @param key_frame 是否有关键帧
+     */
+    virtual void onSegmentData(std::string string, uint64_t stamp, bool key_frame) = 0;
+};
+
+} // namespace mediakit
+
+#endif //defined(ENABLE_MP4)
 #endif //ZLMEDIAKIT_MP4MUXER_H

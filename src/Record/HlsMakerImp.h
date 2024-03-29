@@ -1,9 +1,9 @@
 ﻿/*
- * Copyright (c) 2016 The ZLMediaKit project authors. All Rights Reserved.
+ * Copyright (c) 2016-present The ZLMediaKit project authors. All Rights Reserved.
  *
- * This file is part of ZLMediaKit(https://github.com/xia-chu/ZLMediaKit).
+ * This file is part of ZLMediaKit(https://github.com/ZLMediaKit/ZLMediaKit).
  *
- * Use of this source code is governed by MIT license that can be found in the
+ * Use of this source code is governed by MIT-like license that can be found in the
  * LICENSE file in the root of the source tree. All contributing project authors
  * may be found in the AUTHORS file in the root of the source tree.
  */
@@ -19,15 +19,10 @@
 
 namespace mediakit {
 
-class HlsMakerImp : public HlsMaker{
+class HlsMakerImp : public HlsMaker {
 public:
-    HlsMakerImp(const std::string &m3u8_file,
-                const std::string &params,
-                uint32_t bufSize  = 64 * 1024,
-                float seg_duration = 5,
-                uint32_t seg_number = 3,
-                bool seg_keep = false);
-
+    HlsMakerImp(bool is_fmp4, const std::string &m3u8_file, const std::string &params, uint32_t bufSize = 64 * 1024,
+                float seg_duration = 5, uint32_t seg_number = 3, bool seg_keep = false);
     ~HlsMakerImp() override;
 
     /**
@@ -52,8 +47,9 @@ public:
 protected:
     std::string onOpenSegment(uint64_t index) override ;
     void onDelSegment(uint64_t index) override;
+    void onWriteInitSegment(const char *data, size_t len) override;
     void onWriteSegment(const char *data, size_t len) override;
-    void onWriteHls(const std::string &data) override;
+    void onWriteHls(const std::string &data, bool include_delay) override;
     void onFlushLastSegment(uint64_t duration_ms) override;
 
 private:
@@ -64,6 +60,8 @@ private:
     int _buf_size;
     std::string _params;
     std::string _path_hls;
+    std::string _path_hls_delay;
+    std::string _path_init;
     std::string _path_prefix;
     RecordInfo _info;
     std::shared_ptr<FILE> _file;

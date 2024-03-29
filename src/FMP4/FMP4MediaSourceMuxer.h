@@ -1,17 +1,15 @@
 ﻿/*
- * Copyright (c) 2016 The ZLMediaKit project authors. All Rights Reserved.
+ * Copyright (c) 2016-present The ZLMediaKit project authors. All Rights Reserved.
  *
- * This file is part of ZLMediaKit(https://github.com/xia-chu/ZLMediaKit).
+ * This file is part of ZLMediaKit(https://github.com/ZLMediaKit/ZLMediaKit).
  *
- * Use of this source code is governed by MIT license that can be found in the
+ * Use of this source code is governed by MIT-like license that can be found in the
  * LICENSE file in the root of the source tree. All contributing project authors
  * may be found in the AUTHORS file in the root of the source tree.
  */
 
 #ifndef ZLMEDIAKIT_FMP4MEDIASOURCEMUXER_H
 #define ZLMEDIAKIT_FMP4MEDIASOURCEMUXER_H
-
-#if defined(ENABLE_MP4)
 
 #include "FMP4MediaSource.h"
 #include "Record/MP4Muxer.h"
@@ -23,12 +21,9 @@ class FMP4MediaSourceMuxer final : public MP4MuxerMemory, public MediaSourceEven
 public:
     using Ptr = std::shared_ptr<FMP4MediaSourceMuxer>;
 
-    FMP4MediaSourceMuxer(const std::string &vhost,
-                         const std::string &app,
-                         const std::string &stream_id,
-                         const ProtocolOption &option) {
+    FMP4MediaSourceMuxer(const MediaTuple& tuple, const ProtocolOption &option) {
         _option = option;
-        _media_src = std::make_shared<FMP4MediaSource>(vhost, app, stream_id);
+        _media_src = std::make_shared<FMP4MediaSource>(tuple);
     }
 
     ~FMP4MediaSourceMuxer() override { MP4MuxerMemory::flush(); };
@@ -66,7 +61,8 @@ public:
         return _option.fmp4_demand ? (_clear_cache ? true : _enabled) : true;
     }
 
-    void onAllTrackReady() {
+    void addTrackCompleted() override {
+        MP4MuxerMemory::addTrackCompleted();
         _media_src->setInitSegment(getInitSegment());
     }
 
@@ -89,5 +85,4 @@ private:
 
 }//namespace mediakit
 
-#endif// defined(ENABLE_MP4)
 #endif //ZLMEDIAKIT_FMP4MEDIASOURCEMUXER_H

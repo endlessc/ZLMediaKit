@@ -1,9 +1,9 @@
 ﻿/*
- * Copyright (c) 2016 The ZLMediaKit project authors. All Rights Reserved.
+ * Copyright (c) 2016-present The ZLMediaKit project authors. All Rights Reserved.
  *
- * This file is part of ZLMediaKit(https://github.com/xia-chu/ZLMediaKit).
+ * This file is part of ZLMediaKit(https://github.com/ZLMediaKit/ZLMediaKit).
  *
- * Use of this source code is governed by MIT license that can be found in the
+ * Use of this source code is governed by MIT-like license that can be found in the
  * LICENSE file in the root of the source tree. All contributing project authors
  * may be found in the AUTHORS file in the root of the source tree.
  */
@@ -47,11 +47,8 @@ public:
     using Ptr = std::shared_ptr<DevChannel>;
 
     //fDuration<=0为直播，否则为点播
-    DevChannel(
-        const std::string &vhost, const std::string &app, const std::string &stream_id, float duration = 0,
-        const ProtocolOption &option = ProtocolOption())
-        : MultiMediaSourceMuxer(vhost, app, stream_id, duration, option) {}
-    ~DevChannel() override = default;
+    DevChannel(const MediaTuple& tuple, float duration = 0, const ProtocolOption &option = ProtocolOption())
+        : MultiMediaSourceMuxer(tuple, duration, option) {}
 
     /**
      * 初始化视频Track

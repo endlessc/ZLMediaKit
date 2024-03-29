@@ -1,9 +1,9 @@
 ﻿/*
- * Copyright (c) 2016 The ZLMediaKit project authors. All Rights Reserved.
+ * Copyright (c) 2016-present The ZLMediaKit project authors. All Rights Reserved.
  *
- * This file is part of ZLMediaKit(https://github.com/xia-chu/ZLMediaKit).
+ * This file is part of ZLMediaKit(https://github.com/ZLMediaKit/ZLMediaKit).
  *
- * Use of this source code is governed by MIT license that can be found in the
+ * Use of this source code is governed by MIT-like license that can be found in the
  * LICENSE file in the root of the source tree. All contributing project authors
  * may be found in the AUTHORS file in the root of the source tree.
  */
@@ -38,7 +38,7 @@
 #endif
 
 #if defined(ENABLE_VERSION)
-#include "version.h"
+#include "ZLMVersion.h"
 #endif
 
 #if !defined(_WIN32)
@@ -179,11 +179,29 @@ public:
                                  throw ExitException();
                              });
 #endif
-    }
+        (*_parser) << Option(0,/*该选项简称，如果是\x00则说明无简称*/
+                             "log-slice",/*该选项全称,每个选项必须有全称；不得为null或空字符串*/
+                             Option::ArgRequired,/*该选项后面必须跟值*/
+                             "100",/*该选项默认值*/
+                             true,/*该选项是否必须赋值，如果没有默认值且为ArgRequired时用户必须提供该参数否则将抛异常*/
+                             "最大保存日志切片个数",/*该选项说明文字*/
+                             nullptr);
 
-    ~CMD_main() override{}
-    const char *description() const override{
-        return "主程序命令参数";
+        (*_parser) << Option(0,/*该选项简称，如果是\x00则说明无简称*/
+                             "log-size",/*该选项全称,每个选项必须有全称；不得为null或空字符串*/
+                             Option::ArgRequired,/*该选项后面必须跟值*/
+                             "256",/*该选项默认值*/
+                             true,/*该选项是否必须赋值，如果没有默认值且为ArgRequired时用户必须提供该参数否则将抛异常*/
+                             "单个日志切片最大容量,单位MB",/*该选项说明文字*/
+                             nullptr);
+
+        (*_parser) << Option(0,/*该选项简称，如果是\x00则说明无简称*/
+                             "log-dir",/*该选项全称,每个选项必须有全称；不得为null或空字符串*/
+                             Option::ArgRequired,/*该选项后面必须跟值*/
+                             (exeDir() + "log/").data(),/*该选项默认值*/
+                             true,/*该选项是否必须赋值，如果没有默认值且为ArgRequired时用户必须提供该参数否则将抛异常*/
+                             "日志保存文件夹路径",/*该选项说明文字*/
+                             nullptr);
     }
 };
 
@@ -213,9 +231,11 @@ int start_main(int argc,char *argv[]) {
         //设置日志
         Logger::Instance().add(std::make_shared<ConsoleChannel>("ConsoleChannel", logLevel));
 #if !defined(ANDROID)
-        auto fileChannel = std::make_shared<FileChannel>("FileChannel", exeDir() + "log/", logLevel);
+        auto fileChannel = std::make_shared<FileChannel>("FileChannel", cmd_main["log-dir"], logLevel);
         // 日志最多保存天数
         fileChannel->setMaxDay(cmd_main["max_day"]);
+        fileChannel->setFileMaxCount(cmd_main["log-slice"]);
+        fileChannel->setFileMaxSize(cmd_main["log-size"]);
         Logger::Instance().add(fileChannel);
 #endif // !defined(ANDROID)
 
@@ -238,14 +258,14 @@ int start_main(int argc,char *argv[]) {
         //加载配置文件，如果配置文件不存在就创建一个
         loadIniConfig(g_ini_file.data());
 
-        if (!File::is_dir(ssl_file.data())) {
-            //不是文件夹，加载证书，证书包含公钥和私钥
+        if (!File::is_dir(ssl_file)) {
+            // 不是文件夹，加载证书，证书包含公钥和私钥
             SSL_Initor::Instance().loadCertificate(ssl_file.data());
         } else {
             //加载文件夹下的所有证书
-            File::scanDir(ssl_file, [](const string &path, bool isDir) {
+            File::scanDir(ssl_file,[](const string &path, bool isDir){
                 if (!isDir) {
-                    //最后的一个证书会当做默认证书(客户端ssl握手时未指定主机)
+                    // 最后的一个证书会当做默认证书(客户端ssl握手时未指定主机)
                     SSL_Initor::Instance().loadCertificate(path.data());
                 }
                 return true;
@@ -265,6 +285,7 @@ int start_main(int argc,char *argv[]) {
         //如果需要调用getSnap和addFFmpegSource接口，可以关闭cpu亲和性
 
         EventPollerPool::setPoolSize(threads);
+        WorkThreadPool::setPoolSize(threads);
         EventPollerPool::enableCpuAffinity(affinity);
 
         //简单的telnet服务器，可用于服务器调试，但是不能使用23端口，否则telnet上了莫名其妙的现象
@@ -325,7 +346,20 @@ int start_main(int argc,char *argv[]) {
         uint16_t srtPort = mINI::Instance()[SRT::kPort];
 #endif //defined(ENABLE_SRT)
 
+        installWebApi();
+        InfoL << "已启动http api 接口";
+        installWebHook();
+        InfoL << "已启动http hook 接口";
+
         try {
+            auto &secret = mINI::Instance()[API::kSecret];
+            if (secret == "035c73f7-bb6b-4889-a715-d9eb2d1925cc" || secret.empty()) {
+                // 使用默认secret被禁止启动
+                secret = makeRandStr(32, true);
+                mINI::Instance().dumpFile(g_ini_file);
+                WarnL << "The " << API::kSecret << " is invalid, modified it to: " << secret
+                      << ", saved config file: " << g_ini_file;
+            }
             //rtsp服务器，端口默认554
             if (rtspPort) { rtspSrv->start<RtspSession>(rtspPort); }
             //rtsps服务器，端口默认322
@@ -358,13 +392,12 @@ int start_main(int argc,char *argv[]) {
 #endif//defined(ENABLE_WEBRTC)
 
 #if defined(ENABLE_SRT)
-        // srt udp服务器
-        if(srtPort) { srtSrv->start<SRT::SrtSession>(srtPort); }
+            // srt udp服务器
+            if (srtPort) { srtSrv->start<SRT::SrtSession>(srtPort); }
 #endif//defined(ENABLE_SRT)
 
         } catch (std::exception &ex) {
-            WarnL << "端口占用或无权限:" << ex.what() << endl;
-            ErrorL << "程序启动失败，请修改配置文件中端口号后重试!" << endl;
+            ErrorL << "Start server failed: " << ex.what();
             sleep(1);
 #if !defined(_WIN32)
             if (pid != getpid() && kill_parent_if_failed) {
@@ -375,18 +408,19 @@ int start_main(int argc,char *argv[]) {
             return -1;
         }
 
-        installWebApi();
-        InfoL << "已启动http api 接口";
-        installWebHook();
-        InfoL << "已启动http hook 接口";
-
         //设置退出信号处理函数
         static semaphore sem;
         signal(SIGINT, [](int) {
             InfoL << "SIGINT:exit";
-            signal(SIGINT, SIG_IGN);// 设置退出信号
+            signal(SIGINT, SIG_IGN); // 设置退出信号
             sem.post();
-        });// 设置退出信号
+        }); // 设置退出信号
+
+        signal(SIGTERM,[](int) {
+            WarnL << "SIGTERM:exit";
+            signal(SIGTERM, SIG_IGN);
+            sem.post();
+        });
 
 #if !defined(_WIN32)
         signal(SIGHUP, [](int) { mediakit::loadIniConfig(g_ini_file.data()); });
@@ -395,6 +429,8 @@ int start_main(int argc,char *argv[]) {
     }
     unInstallWebApi();
     unInstallWebHook();
+    onProcessExited();
+
     //休眠1秒再退出，防止资源释放顺序错误
     InfoL << "程序退出中,请等待...";
     sleep(1);

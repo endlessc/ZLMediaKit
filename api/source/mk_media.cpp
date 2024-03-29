@@ -1,9 +1,9 @@
 ﻿/*
- * Copyright (c) 2016 The ZLMediaKit project authors. All Rights Reserved.
+ * Copyright (c) 2016-present The ZLMediaKit project authors. All Rights Reserved.
  *
- * This file is part of ZLMediaKit(https://github.com/xia-chu/ZLMediaKit).
+ * This file is part of ZLMediaKit(https://github.com/ZLMediaKit/ZLMediaKit).
  *
- * Use of this source code is governed by MIT license that can be found in the
+ * Use of this source code is governed by MIT-like license that can be found in the
  * LICENSE file in the root of the source tree. All contributing project authors
  * may be found in the AUTHORS file in the root of the source tree.
  */
@@ -22,7 +22,8 @@ public:
     MediaHelper(const char *vhost, const char *app, const char *stream, float duration, const ProtocolOption &option) {
         _poller = EventPollerPool::Instance().getPoller();
         // 在poller线程中创建DevChannel(MultiMediaSourceMuxer)对象，确保严格的线程安全限制
-        _poller->sync([&]() { _channel = std::make_shared<DevChannel>(vhost, app, stream, duration, option); });
+        auto tuple = MediaTuple{vhost, app, stream};
+        _poller->sync([&]() { _channel = std::make_shared<DevChannel>(tuple, duration, option); });
     }
 
     ~MediaHelper() = default;
@@ -263,7 +264,7 @@ API_EXPORT void API_CALL mk_media_input_yuv(mk_media ctx, const char *yuv[3], in
 }
 
 API_EXPORT int API_CALL mk_media_input_aac(mk_media ctx, const void *data, int len, uint64_t dts, void *adts) {
-    assert(ctx && data && len > 0 && adts);
+    assert(ctx && data && len > 0);
     MediaHelper::Ptr *obj = (MediaHelper::Ptr *) ctx;
     return (*obj)->getChannel()->inputAAC((const char *) data, len, dts, (char *) adts);
 }

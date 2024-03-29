@@ -1,9 +1,9 @@
 ﻿/*
- * Copyright (c) 2016 The ZLMediaKit project authors. All Rights Reserved.
+ * Copyright (c) 2016-present The ZLMediaKit project authors. All Rights Reserved.
  *
- * This file is part of ZLMediaKit(https://github.com/xia-chu/ZLMediaKit).
+ * This file is part of ZLMediaKit(https://github.com/ZLMediaKit/ZLMediaKit).
  *
- * Use of this source code is governed by MIT license that can be found in the
+ * Use of this source code is governed by MIT-like license that can be found in the
  * LICENSE file in the root of the source tree. All contributing project authors
  * may be found in the AUTHORS file in the root of the source tree.
  */
@@ -21,17 +21,21 @@ class RtmpMediaSourceMuxer final : public RtmpMuxer, public MediaSourceEventInte
 public:
     using Ptr = std::shared_ptr<RtmpMediaSourceMuxer>;
 
-    RtmpMediaSourceMuxer(const std::string &vhost,
-                         const std::string &strApp,
-                         const std::string &strId,
+    RtmpMediaSourceMuxer(const MediaTuple& tuple,
                          const ProtocolOption &option,
                          const TitleMeta::Ptr &title = nullptr) : RtmpMuxer(title) {
         _option = option;
-        _media_src = std::make_shared<RtmpMediaSource>(vhost, strApp, strId);
+        _media_src = std::make_shared<RtmpMediaSource>(tuple);
         getRtmpRing()->setDelegate(_media_src);
     }
 
-    ~RtmpMediaSourceMuxer() override { RtmpMuxer::flush(); }
+    ~RtmpMediaSourceMuxer() override {
+        try {
+            RtmpMuxer::flush();
+        } catch (std::exception &ex) {
+            WarnL << ex.what();
+        }
+    }
 
     void setListener(const std::weak_ptr<MediaSourceEvent> &listener){
         setDelegate(listener);
@@ -46,7 +50,8 @@ public:
         return _media_src->readerCount();
     }
 
-    void onAllTrackReady(){
+    void addTrackCompleted() override {
+        RtmpMuxer::addTrackCompleted();
         makeConfigPacket();
         _media_src->setMetaData(getMetadata());
     }

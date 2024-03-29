@@ -1,9 +1,9 @@
 ﻿/*
- * Copyright (c) 2016 The ZLMediaKit project authors. All Rights Reserved.
+ * Copyright (c) 2016-present The ZLMediaKit project authors. All Rights Reserved.
  *
- * This file is part of ZLMediaKit(https://github.com/xia-chu/ZLMediaKit).
+ * This file is part of ZLMediaKit(https://github.com/ZLMediaKit/ZLMediaKit).
  *
- * Use of this source code is governed by MIT license that can be found in the
+ * Use of this source code is governed by MIT-like license that can be found in the
  * LICENSE file in the root of the source tree. All contributing project authors
  * may be found in the AUTHORS file in the root of the source tree.
  */
@@ -34,7 +34,7 @@ size_t RtcpContext::getLost() {
     throw std::runtime_error("没有实现, rtp发送者无法统计丢包率");
 }
 
-size_t RtcpContext::geLostInterval() {
+size_t RtcpContext::getLostInterval() {
     throw std::runtime_error("没有实现, rtp发送者无法统计丢包率");
 }
 
@@ -231,7 +231,7 @@ size_t RtcpContextForRecv::getLost() {
     return getExpectedPackets() - _packets;
 }
 
-size_t RtcpContextForRecv::geLostInterval() {
+size_t RtcpContextForRecv::getLostInterval() {
     auto lost = getLost();
     auto ret = lost - _last_lost;
     _last_lost = lost;
@@ -248,7 +248,7 @@ Buffer::Ptr RtcpContextForRecv::createRtcpRR(uint32_t rtcp_ssrc, uint32_t rtp_ss
     uint8_t fraction = 0;
     auto expected_interval = getExpectedPacketsInterval();
     if (expected_interval) {
-        fraction = uint8_t(geLostInterval() << 8 / expected_interval);
+        fraction = uint8_t(getLostInterval() << 8 / expected_interval);
     }
 
     item->fraction = fraction;

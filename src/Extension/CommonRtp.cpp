@@ -1,9 +1,9 @@
 ﻿/*
- * Copyright (c) 2016 The ZLMediaKit project authors. All Rights Reserved.
+ * Copyright (c) 2016-present The ZLMediaKit project authors. All Rights Reserved.
  *
- * This file is part of ZLMediaKit(https://github.com/xia-chu/ZLMediaKit).
+ * This file is part of ZLMediaKit(https://github.com/ZLMediaKit/ZLMediaKit).
  *
- * Use of this source code is governed by MIT license that can be found in the
+ * Use of this source code is governed by MIT-like license that can be found in the
  * LICENSE file in the root of the source tree. All contributing project authors
  * may be found in the AUTHORS file in the root of the source tree.
  */
@@ -18,10 +18,6 @@ CommonRtpDecoder::CommonRtpDecoder(CodecId codec, size_t max_frame_size ){
     obtainFrame();
 }
 
-CodecId CommonRtpDecoder::getCodecId() const {
-    return _codec;
-}
-
 void CommonRtpDecoder::obtainFrame() {
     _frame = FrameImp::create();
     _frame->_codec_id = _codec;
@@ -34,10 +30,10 @@ bool CommonRtpDecoder::inputRtp(const RtpPacket::Ptr &rtp, bool){
         return false;
     }
     auto payload = rtp->getPayload();
-    auto stamp = rtp->getStampMS();
+    auto stamp = rtp->getStamp();
     auto seq = rtp->getSeq();
 
-    if (_frame->_dts != stamp || _frame->_buffer.size() > _max_frame_size) {
+    if (_last_stamp != stamp || _frame->_buffer.size() > _max_frame_size) {
         //时间戳发生变化或者缓存超过MAX_FRAME_SIZE，则清空上帧数据
         if (!_frame->_buffer.empty()) {
             //有有效帧，则输出
@@ -46,7 +42,8 @@ bool CommonRtpDecoder::inputRtp(const RtpPacket::Ptr &rtp, bool){
 
         //新的一帧数据
         obtainFrame();
-        _frame->_dts = stamp;
+        _frame->_dts = rtp->getStampMS();
+        _last_stamp = stamp;
         _drop_flag = false;
     } else if (_last_seq != 0 && (uint16_t)(_last_seq + 1) != seq) {
         //时间戳未发生变化，但是seq却不连续，说明中间rtp丢包了，那么整帧应该废弃
@@ -65,17 +62,12 @@ bool CommonRtpDecoder::inputRtp(const RtpPacket::Ptr &rtp, bool){
 
 ////////////////////////////////////////////////////////////////
 
-CommonRtpEncoder::CommonRtpEncoder(CodecId codec, uint32_t ssrc, uint32_t mtu_size,
-                                   uint32_t sample_rate,  uint8_t payload_type, uint8_t interleaved)
-        : CommonRtpDecoder(codec), RtpInfo(ssrc, mtu_size, sample_rate, payload_type, interleaved) {
-}
-
 bool CommonRtpEncoder::inputFrame(const Frame::Ptr &frame){
     auto stamp = frame->pts();
     auto ptr = frame->data() + frame->prefixSize();
     auto len = frame->size() - frame->prefixSize();
     auto remain_size = len;
-    auto max_size = getMaxSize();
+    auto max_size = getRtpInfo().getMaxSize();
     bool is_key = frame->keyFrame();
     bool mark = false;
     while (remain_size > 0) {
@@ -86,7 +78,7 @@ bool CommonRtpEncoder::inputFrame(const Frame::Ptr &frame){
             rtp_size = remain_size;
             mark = true;
         }
-        RtpCodec::inputRtp(makeRtp(getTrackType(), ptr, rtp_size, mark, stamp), is_key);
+        RtpCodec::inputRtp(getRtpInfo().makeRtp(frame->getTrackType(), ptr, rtp_size, mark, stamp), is_key);
         ptr += rtp_size;
         remain_size -= rtp_size;
         is_key = false;

@@ -1,9 +1,9 @@
 ﻿/*
- * Copyright (c) 2016 The ZLMediaKit project authors. All Rights Reserved.
+ * Copyright (c) 2016-present The ZLMediaKit project authors. All Rights Reserved.
  *
- * This file is part of ZLMediaKit(https://github.com/xia-chu/ZLMediaKit).
+ * This file is part of ZLMediaKit(https://github.com/ZLMediaKit/ZLMediaKit).
  *
- * Use of this source code is governed by MIT license that can be found in the
+ * Use of this source code is governed by MIT-like license that can be found in the
  * LICENSE file in the root of the source tree. All contributing project authors
  * may be found in the AUTHORS file in the root of the source tree.
  */
@@ -28,23 +28,26 @@ class HttpSession: public toolkit::Session,
                    public HttpRequestSplitter,
                    public WebSocketSplitter {
 public:
-    typedef StrCaseMap KeyValue;
-    typedef HttpResponseInvokerImp HttpResponseInvoker;
+    using Ptr = std::shared_ptr<HttpSession>;
+    using KeyValue = StrCaseMap;
+    using HttpResponseInvoker = HttpResponseInvokerImp ;
     friend class AsyncSender;
     /**
      * @param errMsg 如果为空，则代表鉴权通过，否则为错误提示
      * @param accessPath 运行或禁止访问的根目录
      * @param cookieLifeSecond 鉴权cookie有效期
      **/
-    typedef std::function<void(const std::string &errMsg,const std::string &accessPath, int cookieLifeSecond)> HttpAccessPathInvoker;
+    using HttpAccessPathInvoker = std::function<void(const std::string &errMsg,const std::string &accessPath, int cookieLifeSecond)>;
 
     HttpSession(const toolkit::Socket::Ptr &pSock);
-    ~HttpSession() override;
 
     void onRecv(const toolkit::Buffer::Ptr &) override;
     void onError(const toolkit::SockException &err) override;
     void onManager() override;
-    static std::string urlDecode(const std::string &str);
+    static std::string urlDecodePath(const std::string &str);
+    static std::string urlDecodeComponent(const std::string &str);
+    void setTimeoutSec(size_t second);
+    void setMaxReqSize(size_t max_req_size);
 
 protected:
     //FlvMuxer override
@@ -100,11 +103,10 @@ protected:
     std::string get_peer_ip() override;
 
 private:
-    void Handle_Req_GET(ssize_t &content_len);
-    void Handle_Req_GET_l(ssize_t &content_len, bool sendBody);
-    void Handle_Req_POST(ssize_t &content_len);
-    void Handle_Req_HEAD(ssize_t &content_len);
-    void Handle_Req_OPTIONS(ssize_t &content_len);
+    void onHttpRequest_GET();
+    void onHttpRequest_POST();
+    void onHttpRequest_HEAD();
+    void onHttpRequest_OPTIONS();
 
     bool checkLiveStream(const std::string &schema, const std::string  &url_suffix, const std::function<void(const MediaSource::Ptr &src)> &cb);
 
@@ -123,19 +125,26 @@ private:
     //设置socket标志
     void setSocketFlags();
 
+protected:
+    MediaInfo _media_info;
+
 private:
     bool _is_live_stream = false;
     bool _live_over_websocket = false;
+    //超时时间
+    size_t _keep_alive_sec = 0;
+    //最大http请求字节大小
+    size_t _max_req_size = 0;
     //消耗的总流量
     uint64_t _total_bytes_usage = 0;
+    // http请求中的 Origin字段
     std::string _origin;
     Parser _parser;
     toolkit::Ticker _ticker;
-    MediaInfo _mediaInfo;
     TSMediaSource::RingType::RingReader::Ptr _ts_reader;
     FMP4MediaSource::RingType::RingReader::Ptr _fmp4_reader;
     //处理content数据的callback
-    std::function<bool (const char *data,size_t len) > _contentCallBack;
+    std::function<bool (const char *data,size_t len) > _on_recv_body;
 };
 
 using HttpsSession = toolkit::SessionWithSSL<HttpSession>;

@@ -1,9 +1,9 @@
 ﻿/*
- * Copyright (c) 2016 The ZLMediaKit project authors. All Rights Reserved.
+ * Copyright (c) 2016-present The ZLMediaKit project authors. All Rights Reserved.
  *
- * This file is part of ZLMediaKit(https://github.com/xia-chu/ZLMediaKit).
+ * This file is part of ZLMediaKit(https://github.com/ZLMediaKit/ZLMediaKit).
  *
- * Use of this source code is governed by MIT license that can be found in the
+ * Use of this source code is governed by MIT-like license that can be found in the
  * LICENSE file in the root of the source tree. All contributing project authors
  * may be found in the AUTHORS file in the root of the source tree.
  */
@@ -82,11 +82,11 @@ API_EXPORT void API_CALL mk_tcp_session_send_buffer(const mk_tcp_session ctx, mk
 API_EXPORT void API_CALL mk_tcp_session_send_safe(const mk_tcp_session ctx, const char *data, size_t len);
 API_EXPORT void API_CALL mk_tcp_session_send_buffer_safe(const mk_tcp_session ctx, mk_buffer buffer);
 
-//创建mk_tcp_session的弱引用
+//创建mk_tcp_session的强引用
 API_EXPORT mk_tcp_session_ref API_CALL mk_tcp_session_ref_from(const mk_tcp_session ctx);
-//删除mk_tcp_session的弱引用
+//删除mk_tcp_session的强引用
 API_EXPORT void mk_tcp_session_ref_release(const mk_tcp_session_ref ref);
-//根据弱引用获取mk_tcp_session，如果mk_tcp_session已经销毁，那么返回NULL
+//根据强引用获取mk_tcp_session
 API_EXPORT mk_tcp_session mk_tcp_session_from_ref(const mk_tcp_session_ref ref);
 
 ///////////////////////////////////////////自定义tcp服务/////////////////////////////////////////////

@@ -1,9 +1,9 @@
 ﻿/*
- * Copyright (c) 2016 The ZLMediaKit project authors. All Rights Reserved.
+ * Copyright (c) 2016-present The ZLMediaKit project authors. All Rights Reserved.
  *
- * This file is part of ZLMediaKit(https://github.com/xia-chu/ZLMediaKit).
+ * This file is part of ZLMediaKit(https://github.com/ZLMediaKit/ZLMediaKit).
  *
- * Use of this source code is governed by MIT license that can be found in the
+ * Use of this source code is governed by MIT-like license that can be found in the
  * LICENSE file in the root of the source tree. All contributing project authors
  * may be found in the AUTHORS file in the root of the source tree.
  */
@@ -20,17 +20,34 @@ using namespace toolkit;
 
 namespace mediakit {
 
-MP4Reader::MP4Reader(const string &vhost, const string &app, const string &stream_id, const string &file_path) {
+MP4Reader::MP4Reader(const std::string &vhost, const std::string &app, const std::string &stream_id, const string &file_path,
+                     toolkit::EventPoller::Ptr poller) {
+    ProtocolOption option;
+    // 读取mp4文件并流化时，不重复生成mp4/hls文件
+    option.enable_mp4 = false;
+    option.enable_hls = false;
+    option.enable_hls_fmp4 = false;
+    // mp4支持多track
+    option.max_track = 16;
+    setup(vhost, app, stream_id, file_path, option, std::move(poller));
+}
+
+MP4Reader::MP4Reader(const std::string &vhost, const std::string &app, const std::string &stream_id, const string &file_path, const ProtocolOption &option, toolkit::EventPoller::Ptr poller) {
+    setup(vhost, app, stream_id, file_path, option, std::move(poller));
+}
+
+void MP4Reader::setup(const std::string &vhost, const std::string &app, const std::string &stream_id, const std::string &file_path, const ProtocolOption &option, toolkit::EventPoller::Ptr poller) {
     //读写文件建议放在后台线程
-    _poller = WorkThreadPool::Instance().getPoller();
+    auto tuple =  MediaTuple{vhost, app, stream_id};
+    _poller = poller ? std::move(poller) : WorkThreadPool::Instance().getPoller();
     _file_path = file_path;
     if (_file_path.empty()) {
         GET_CONFIG(string, recordPath, Protocol::kMP4SavePath);
         GET_CONFIG(bool, enableVhost, General::kEnableVhost);
         if (enableVhost) {
-            _file_path = vhost + "/" + app + "/" + stream_id;
+            _file_path = tuple.shortUrl();
         } else {
-            _file_path = app + "/" + stream_id;
+            _file_path = tuple.app + "/" + tuple.stream;
         }
         _file_path = File::absolutePath(_file_path, recordPath);
     }
@@ -38,14 +55,11 @@ MP4Reader::MP4Reader(const string &vhost, const string &app, const string &strea
     _demuxer = std::make_shared<MP4Demuxer>();
     _demuxer->openMP4(_file_path);
 
-    if (stream_id.empty()) {
+    if (tuple.stream.empty()) {
         return;
     }
-    ProtocolOption option;
-    //读取mp4文件并流化时，不重复生成mp4/hls文件
-    option.enable_mp4 = false;
-    option.enable_hls = false;
-    _muxer = std::make_shared<MultiMediaSourceMuxer>(vhost, app, stream_id, _demuxer->getDurationMS() / 1000.0f, option);
+
+    _muxer = std::make_shared<MultiMediaSourceMuxer>(tuple, _demuxer->getDurationMS() / 1000.0f, option);
     auto tracks = _demuxer->getTracks(false);
     if (tracks.empty()) {
         throw std::runtime_error(StrPrinter << "该mp4文件没有有效的track:" << _file_path);
@@ -110,6 +124,7 @@ void MP4Reader::stopReadMP4() {
 
 void MP4Reader::startReadMP4(uint64_t sample_ms, bool ref_self, bool file_repeat) {
     GET_CONFIG(uint32_t, sampleMS, Record::kSampleMS);
+    setCurrentStamp(0);
     auto strong_self = shared_from_this();
     if (_muxer) {
         //一直读到所有track就绪为止
@@ -179,12 +194,14 @@ bool MP4Reader::pause(MediaSource &sender, bool pause) {
 }
 
 bool MP4Reader::speed(MediaSource &sender, float speed) {
-    if (speed < 0.1 && speed > 20) {
+    if (speed < 0.1 || speed > 20) {
         WarnL << "播放速度取值范围非法:" << speed;
         return false;
     }
-    //设置播放速度后应该恢复播放
-    pause(sender, false);
+    //_seek_ticker重置，赋值_seek_to
+    setCurrentStamp(getCurrentStamp());
+    // 设置播放速度后应该恢复播放
+    _paused = false;
     if (_speed == speed) {
         return true;
     }

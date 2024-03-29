@@ -1,9 +1,9 @@
 ﻿/*
- * Copyright (c) 2016 The ZLMediaKit project authors. All Rights Reserved.
+ * Copyright (c) 2016-present The ZLMediaKit project authors. All Rights Reserved.
  *
- * This file is part of ZLMediaKit(https://github.com/xia-chu/ZLMediaKit).
+ * This file is part of ZLMediaKit(https://github.com/ZLMediaKit/ZLMediaKit).
  *
- * Use of this source code is governed by MIT license that can be found in the
+ * Use of this source code is governed by MIT-like license that can be found in the
  * LICENSE file in the root of the source tree. All contributing project authors
  * may be found in the AUTHORS file in the root of the source tree.
  */
@@ -12,16 +12,15 @@
 #define ZLMEDIAKIT_WEBRTCPUSHER_H
 
 #include "WebRtcTransport.h"
-#include "Rtsp/RtspMediaSourceImp.h"
+#include "Rtsp/RtspMediaSource.h"
 
 namespace mediakit {
 
 class WebRtcPusher : public WebRtcTransportImp, public MediaSourceEvent {
 public:
     using Ptr = std::shared_ptr<WebRtcPusher>;
-    ~WebRtcPusher() override = default;
-    static Ptr create(const EventPoller::Ptr &poller, const RtspMediaSourceImp::Ptr &src,
-                      const std::shared_ptr<void> &ownership, const MediaInfo &info, const ProtocolOption &option, bool preferred_tcp = false);
+    static Ptr create(const EventPoller::Ptr &poller, const RtspMediaSource::Ptr &src,
+                      const std::shared_ptr<void> &ownership, const MediaInfo &info, const ProtocolOption &option);
 
 protected:
     ///////WebRtcTransportImp override///////
@@ -29,9 +28,10 @@ protected:
     void onDestory() override;
     void onRtcConfigure(RtcConfigure &configure) const override;
     void onRecvRtp(MediaTrack &track, const std::string &rid, RtpPacket::Ptr rtp) override;
+    void onShutdown(const SockException &ex) override;
     void onRtcpBye() override;
     ////  dtls相关的回调 ////
-   void OnDtlsTransportClosed(const RTC::DtlsTransport *dtlsTransport) override;
+    void OnDtlsTransportClosed(const RTC::DtlsTransport *dtlsTransport) override;
 
 protected:
     ///////MediaSourceEvent override///////
@@ -51,8 +51,8 @@ protected:
     float getLossRate(MediaSource &sender,TrackType type) override;
 
 private:
-    WebRtcPusher(const EventPoller::Ptr &poller, const RtspMediaSourceImp::Ptr &src,
-                 const std::shared_ptr<void> &ownership, const MediaInfo &info, const ProtocolOption &option, bool preferred_tcp);
+    WebRtcPusher(const EventPoller::Ptr &poller, const RtspMediaSource::Ptr &src,
+                 const std::shared_ptr<void> &ownership, const MediaInfo &info, const ProtocolOption &option);
 
 private:
     bool _simulcast = false;
@@ -61,10 +61,11 @@ private:
     //媒体相关元数据
     MediaInfo _media_info;
     //推流的rtsp源
-    RtspMediaSourceImp::Ptr _push_src;
+    RtspMediaSource::Ptr _push_src;
     //推流所有权
     std::shared_ptr<void> _push_src_ownership;
     //推流的rtsp源,支持simulcast
+    std::recursive_mutex _mtx;
     std::unordered_map<std::string/*rid*/, RtspMediaSource::Ptr> _push_src_sim;
     std::unordered_map<std::string/*rid*/, std::shared_ptr<void> > _push_src_sim_ownership;
 };

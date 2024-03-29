@@ -1,9 +1,9 @@
 ﻿/*
- * Copyright (c) 2016 The ZLMediaKit project authors. All Rights Reserved.
+ * Copyright (c) 2016-present The ZLMediaKit project authors. All Rights Reserved.
  *
- * This file is part of ZLMediaKit(https://github.com/xia-chu/ZLMediaKit).
+ * This file is part of ZLMediaKit(https://github.com/ZLMediaKit/ZLMediaKit).
  *
- * Use of this source code is governed by MIT license that can be found in the
+ * Use of this source code is governed by MIT-like license that can be found in the
  * LICENSE file in the root of the source tree. All contributing project authors
  * may be found in the AUTHORS file in the root of the source tree.
  */
@@ -12,6 +12,8 @@
 #define MK_EVENT_OBJECTS_H
 #include "mk_common.h"
 #include "mk_tcp.h"
+#include "mk_track.h"
+#include "mk_util.h"
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -61,19 +63,19 @@ API_EXPORT const char* API_CALL mk_parser_get_content(const mk_parser ctx, size_
 ///////////////////////////////////////////MediaInfo/////////////////////////////////////////////
 //MediaInfo对象的C映射
 typedef struct mk_media_info_t *mk_media_info;
-//MediaInfo::_param_strs
+//MediaInfo::param_strs
 API_EXPORT const char* API_CALL mk_media_info_get_params(const mk_media_info ctx);
-//MediaInfo::_schema
+//MediaInfo::schema
 API_EXPORT const char* API_CALL mk_media_info_get_schema(const mk_media_info ctx);
-//MediaInfo::_vhost
+//MediaInfo::vhost
 API_EXPORT const char* API_CALL mk_media_info_get_vhost(const mk_media_info ctx);
-//MediaInfo::_app
+//MediaInfo::app
 API_EXPORT const char* API_CALL mk_media_info_get_app(const mk_media_info ctx);
-//MediaInfo::_streamid
+//MediaInfo::stream
 API_EXPORT const char* API_CALL mk_media_info_get_stream(const mk_media_info ctx);
-//MediaInfo::_host
+//MediaInfo::host
 API_EXPORT const char* API_CALL mk_media_info_get_host(const mk_media_info ctx);
-//MediaInfo::_port
+//MediaInfo::port
 API_EXPORT uint16_t API_CALL mk_media_info_get_port(const mk_media_info ctx);
 
 
@@ -95,6 +97,13 @@ API_EXPORT const char* API_CALL mk_media_source_get_stream(const mk_media_source
 API_EXPORT int API_CALL mk_media_source_get_reader_count(const mk_media_source ctx);
 //MediaSource::totalReaderCount()
 API_EXPORT int API_CALL mk_media_source_get_total_reader_count(const mk_media_source ctx);
+// get track count from MediaSource
+API_EXPORT int API_CALL mk_media_source_get_track_count(const mk_media_source ctx);
+// copy track reference by index from MediaSource, please use mk_track_unref to release it
+API_EXPORT mk_track API_CALL mk_media_source_get_track(const mk_media_source ctx, int index);
+// MediaSource::broadcastMessage
+API_EXPORT int API_CALL mk_media_source_broadcast_msg(const mk_media_source ctx, const char *msg, size_t len);
+
 /**
  * 直播源在ZLMediaKit中被称作为MediaSource，
  * 目前支持3种，分别是RtmpMediaSource、RtspMediaSource、HlsMediaSource
@@ -132,6 +141,12 @@ API_EXPORT void API_CALL mk_media_source_find(const char *schema,
                                               int from_mp4,
                                               void *user_data,
                                               on_mk_media_source_find_cb cb);
+
+API_EXPORT const mk_media_source API_CALL mk_media_source_find2(const char *schema,
+                                                                const char *vhost,
+                                                                const char *app,
+                                                                const char *stream,
+                                                                int from_mp4);
 //MediaSource::for_each_media()
 API_EXPORT void API_CALL mk_media_source_for_each(void *user_data, on_mk_media_source_find_cb cb, const char *schema,
                                                   const char *vhost, const char *app, const char *stream);
@@ -303,6 +318,8 @@ API_EXPORT void API_CALL mk_publish_auth_invoker_do(const mk_publish_auth_invoke
                                                     int enable_hls,
                                                     int enable_mp4);
 
+API_EXPORT void API_CALL mk_publish_auth_invoker_do2(const mk_publish_auth_invoker ctx, const char *err_msg, mk_ini option);
+
 /**
  * 克隆mk_publish_auth_invoker对象，通过克隆对象为堆对象，可以实现跨线程异步执行mk_publish_auth_invoker_do
  * 如果是同步执行mk_publish_auth_invoker_do，那么没必要克隆对象
@@ -334,6 +351,20 @@ API_EXPORT mk_auth_invoker API_CALL mk_auth_invoker_clone(const mk_auth_invoker 
  * 销毁堆上的克隆对象
  */
 API_EXPORT void API_CALL mk_auth_invoker_clone_release(const mk_auth_invoker ctx);
+
+///////////////////////////////////////////WebRtcTransport/////////////////////////////////////////////
+//WebRtcTransport对象的C映射
+typedef struct mk_rtc_transport_t *mk_rtc_transport;
+
+/**
+ * 发送rtc数据通道
+ * @param ctx 数据通道对象
+ * @param streamId 流id
+ * @param ppid 协议id
+ * @param msg 数据
+ * @param len 数据长度
+ */
+API_EXPORT void API_CALL mk_rtc_send_datachannel(const mk_rtc_transport ctx, uint16_t streamId, uint32_t ppid, const char* msg, size_t len);
 
 #ifdef __cplusplus
 }
