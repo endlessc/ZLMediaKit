@@ -13,6 +13,7 @@
 #include "Util/base64.h"
 #include "Network/sockutil.h"
 #include "Common/config.h"
+#include "Nack.h"
 #include "RtpExt.h"
 #include "Rtcp/Rtcp.h"
 #include "Rtcp/RtcpFCI.h"
@@ -800,7 +801,9 @@ public:
         _on_nack = std::move(on_nack);
         setOnSorted(std::move(cb));
         //设置jitter buffer参数
-        RtpTrackImp::setParams(1024, NackContext::kNackMaxMS, 512);
+        GET_CONFIG(uint32_t, nack_maxms, Rtc::kNackMaxMS);
+        GET_CONFIG(uint32_t, nack_max_rtp, Rtc::kNackMaxSize);
+        RtpTrackImp::setParams(nack_max_rtp, nack_maxms, nack_max_rtp / 2);
         _nack_ctx.setOnNack([this](const FCI_NACK &nack) { onNack(nack); });
     }
 

@@ -173,6 +173,12 @@ std::string MultiMediaSourceMuxer::shortUrl() const {
     return _tuple.shortUrl();
 }
 
+void MultiMediaSourceMuxer::forEachRtpSender(const std::function<void(const std::string &ssrc)> &cb) const {
+    for (auto &pr : _rtp_sender) {
+        cb(pr.first);
+    }
+}
+
 MultiMediaSourceMuxer::MultiMediaSourceMuxer(const MediaTuple& tuple, float dur_sec, const ProtocolOption &option): _tuple(tuple) {
     if (!option.stream_replace.empty()) {
         // 支持在on_publish hook中替换stream_id
@@ -460,8 +466,8 @@ EventPoller::Ptr MultiMediaSourceMuxer::getOwnerPoller(MediaSource &sender) {
     }
 }
 
-std::shared_ptr<MultiMediaSourceMuxer> MultiMediaSourceMuxer::getMuxer(MediaSource &sender) {
-    return shared_from_this();
+std::shared_ptr<MultiMediaSourceMuxer> MultiMediaSourceMuxer::getMuxer(MediaSource &sender) const {
+    return const_cast<MultiMediaSourceMuxer*>(this)->shared_from_this();
 }
 
 bool MultiMediaSourceMuxer::onTrackReady(const Track::Ptr &track) {
