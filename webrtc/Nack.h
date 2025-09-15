@@ -20,26 +20,17 @@
 
 namespace mediakit {
 
-// RTC配置项目
+// RTC配置项目  [AUTO-TRANSLATED:19940011]
+// RTC configuration project
 namespace Rtc {
-
-//~ nack接收端(rtp发送端)
-// Nack缓存包最早时间间隔
-extern const std::string kMaxNackMS;
-// Nack包检查间隔(包数量)
-extern const std::string kRtpCacheCheckInterval;
-
-//~ nack发送端(rtp接收端)
-// 最大保留的rtp丢包状态个数
+// ~ nack发送端，rtp接收端  [AUTO-TRANSLATED:bb169205]
+// ~ nack sender, rtp receiver
+// 最大保留的rtp丢包状态个数  [AUTO-TRANSLATED:70eee442]
+// Maximum number of retained rtp packet loss states
 extern const std::string kNackMaxSize;
-// rtp丢包状态最长保留时间
+// rtp丢包状态最长保留时间  [AUTO-TRANSLATED:f9306375]
+// Maximum retention time for rtp packet loss states
 extern const std::string kNackMaxMS;
-// nack最多请求重传次数
-extern const std::string kNackMaxCount;
-// nack重传频率，rtt的倍数
-extern const std::string kNackIntervalRatio;
-// nack包中rtp个数，减小此值可以让nack包响应更灵敏
-extern const std::string kNackRtpSize;
 } // namespace Rtc
 
 class NackList {
@@ -50,7 +41,7 @@ public:
 private:
     void popFront();
     uint32_t getCacheMS();
-    int64_t getRtpStamp(uint16_t seq);
+    int64_t getNtpStamp(uint16_t seq);
     RtpPacket::Ptr *getRtp(uint16_t seq);
 
 private:
@@ -82,13 +73,14 @@ private:
     int _rtt = 50;
     onNack _cb;
     std::set<uint16_t> _seq;
-    // 最新nack包中的rtp seq值
+    // 最新nack包中的rtp seq值  [AUTO-TRANSLATED:6984d95a]
+    // RTP seq value in the latest nack packet
     uint16_t _nack_seq = 0;
 
     struct NackStatus {
         uint64_t first_stamp;
         uint64_t update_stamp;
-        int nack_count = 0;
+        uint32_t nack_count = 0;
     };
     std::map<uint16_t /*seq*/, NackStatus> _nack_send_status;
 };
